@@ -1,0 +1,15 @@
+.tools/
+archive/
+*.7z
+core/rust-client/target/
+__pycache__/
+build/
+dist/
+*.spec
+portable/
+*.zip
+settings.json
+*.log
+bin/
+packet-proxy/*.exe
+ui-preview.png

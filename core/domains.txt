@@ -1,0 +1,13 @@
+﻿# CSQTT domains for SNI obfuscation
+api.vk.com
+api.vk.me
+login.vk.com
+login.vk.ru
+id.vk.com
+id.vk.ru
+oauth.vk.com
+oauth.vk.ru
+vk.com
+vk.ru
+m.vk.com
+m.vk.ru
