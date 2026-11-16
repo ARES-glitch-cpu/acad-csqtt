@@ -25,11 +25,12 @@ def copy_notices(source, name):
 
 
 copy_notices(Path(sys.base_prefix), "Python")
-for item in importlib.metadata.files("pyinstaller") or []:
-    if "dist-info/licenses/" in str(item).replace("\\", "/"):
+for distribution in ("pyinstaller", "pystray", "Pillow", "six"):
+    for item in importlib.metadata.files(distribution) or []:
         path = Path(item.locate())
-        if path.is_file():
-            copy_notices(path.parent, "PyInstaller")
+        if path.is_file() and "dist-info" in str(item):
+            if path.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE")):
+                copy_notices(path.parent, distribution)
 for tcl in (Path(sys.base_prefix) / "tcl").glob("*"):
     copy_notices(tcl, "TclTk-" + tcl.name)
 copy_notices(root / "core", "CSQTT")

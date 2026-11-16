@@ -6,6 +6,7 @@ import socket
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -133,6 +134,73 @@ class LogExportTests(unittest.TestCase):
             with patch.object(app.filedialog, "asksaveasfilename", return_value=str(filename)):
                 self.ui.save_log()
             self.assertEqual(filename.read_text(encoding="utf-8"), self.expected)
+
+
+@unittest.skipUnless(os.name == "nt", "Windows tray")
+class TrayTests(unittest.TestCase):
+    def test_hide_restore_and_full_exit_during_disconnect(self):
+        root = app.tk.Tk()
+        root.withdraw()
+        processes = []
+        tray = None
+
+        def pump_until(condition, timeout=7):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                root.update()
+                if condition():
+                    return
+                time.sleep(0.01)
+            self.fail("GUI did not reach the expected state")
+
+        try:
+            with patch.object(app, "load_profile", return_value=app.Profile()):
+                ui = app.App(root)
+            ui.start_tray()
+            tray = ui.tray
+            pump_until(tray.ready.is_set)
+            self.assertTrue(tray.icon.visible)
+            core = subprocess.Popen([app.sys.executable, "-c", "import sys; sys.stdin.readline()"],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+                                    creationflags=app.NO_WINDOW)
+            processes.append(core)
+            helper = subprocess.Popen([app.sys.executable, "-c", "import time; time.sleep(60)"],
+                                      stdout=subprocess.PIPE, text=True, creationflags=app.NO_WINDOW)
+            processes.append(helper)
+            ui.core, ui.helper = core, helper
+            ui.hide_to_tray()
+            self.assertEqual(root.state(), "withdrawn")
+            # Invoke the real menu callback from another thread, as pystray does.
+            opened = threading.Thread(target=lambda: tray.icon.menu.items[0](tray.icon))
+            opened.start()
+            opened.join()
+            pump_until(lambda: root.state() == "normal")
+            root.iconify()
+            pump_until(lambda: root.state() == "withdrawn")
+            ui.show_window()
+            root.update()
+            root.tk.call(root.protocol("WM_DELETE_WINDOW"))
+            self.assertEqual(root.state(), "withdrawn")
+            self.assertTrue(all(p.poll() is None for p in processes))
+            ui.stop()
+            exiting = threading.Thread(target=lambda: tray.icon.menu.items[-1](tray.icon))
+            exiting.start()
+            exiting.join()
+            pump_until(lambda: ui.tray is None)
+            self.assertTrue(ui.closing)
+            self.assertFalse(tray.thread.is_alive())
+            self.assertTrue(all(p.poll() is not None for p in processes))
+        finally:
+            if tray:
+                tray.stop()
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            try:
+                root.destroy()
+            except app.tk.TclError:
+                pass
 
 
 if __name__ == "__main__":

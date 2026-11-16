@@ -73,6 +73,6 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $archive "$archive.sha256" --clobber --repo $env:GITHUB_REPOSITORY
           } else {
-            gh release create $tag $archive "$archive.sha256" --verify-tag --title "CSQTT $tag" --notes 'Windows 10 x64. Extract the entire ZIP and run CSQTT-Kolenka.exe.' --latest --repo $env:GITHUB_REPOSITORY
+            gh release create $tag $archive "$archive.sha256" --verify-tag --title "CSQTT $tag" --notes-file RELEASE_NOTES.md --latest --repo $env:GITHUB_REPOSITORY
           }
           if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }

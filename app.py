@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tk_font, messagebox, ttk
 
 ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
 APP_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -180,8 +180,14 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title(f"CSQTT v{APP_VERSION} — коленка / TCP")
-        root.geometry("790x860")
-        root.minsize(700, 760)
+        width = min(1000, root.winfo_screenwidth() - 80)
+        height = min(1000, root.winfo_screenheight() - 100)
+        root.geometry(f"{width}x{height}")
+        root.minsize(min(860, width), min(820, height))
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
+            tk_font.nametofont(name, root=root).configure(family="Segoe UI", size=11)
+        ttk.Style(root).configure(".", font=("Segoe UI", 11))
+        root.option_add("*TCombobox*Listbox.font", ("Segoe UI", 11))
         self.events = queue.Queue()
         self.core = self.helper = None
         self.session = 0
@@ -190,6 +196,8 @@ class App:
         self.running_profile = None
         self.secrets = []
         self.closing = False
+        self.stopping = False
+        self.tray = None
         try:
             profile = load_profile()
         except Exception:
@@ -198,16 +206,25 @@ class App:
         self.remember = tk.BooleanVar(value=PROFILE.exists())
         self.status = tk.StringVar(value="Отключено")
         self.stats = tk.StringVar(value="SOCKS5 127.0.0.1:1080 · HTTP 127.0.0.1:8080")
-        outer = ttk.Frame(root, padding=18)
-        outer.pack(fill="both", expand=True)
-        ttk.Label(outer, text="CSQTT / TCP через корпоративный прокси", font=("Segoe UI", 15, "bold")).pack(anchor="w")
+        self.canvas = tk.Canvas(root, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(root, orient="vertical", command=self.canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        outer = ttk.Frame(self.canvas, padding=18)
+        content = self.canvas.create_window(0, 0, window=outer, anchor="nw")
+        outer.bind("<Configure>", lambda event: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(
+            content, width=event.width, height=max(event.height, outer.winfo_reqheight())))
+        root.bind("<MouseWheel>", self.scroll_window)
+        ttk.Label(outer, text="CSQTT / TCP через корпоративный прокси", font=("Segoe UI", 16, "bold")).pack(anchor="w")
         ttk.Label(outer, text="Без TUN и прав администратора. Все внешние соединения — через HTTP CONNECT.").pack(anchor="w", pady=(5, 12))
         server = ttk.LabelFrame(outer, text="Сервер csqtt", padding=10)
         server.pack(fill="x")
         self.field(server, "Сервер IP:порт", "server", 0)
         self.field(server, "Пароль csqtt", "password", 1, secret=True)
         ttk.Label(server, text="Хеши VK / ссылки звонков\nпо одному на строку (до 6)").grid(row=2, column=0, sticky="nw", pady=5)
-        self.hashes = tk.Text(server, height=3, width=44, font=("Consolas", 10), wrap="word")
+        self.hashes = tk.Text(server, height=3, width=44, font=("Consolas", 11), wrap="word")
         self.hashes.grid(row=2, column=1, sticky="ew", pady=5)
         self.hashes.insert("1.0", profile.hashes)
         proxy = ttk.LabelFrame(outer, text="Корпоративный HTTP-прокси · авторизация Basic", padding=10)
@@ -241,9 +258,9 @@ class App:
         self.stop_button.pack(side="left", padx=8)
         self.test_button = ttk.Button(actions, text="Проверить интернет / IP", command=self.check_internet, state="disabled")
         self.test_button.pack(side="left")
-        ttk.Label(outer, textvariable=self.status, font=("Segoe UI", 11, "bold"), wraplength=740).pack(anchor="w", pady=(12, 3))
+        ttk.Label(outer, textvariable=self.status, font=("Segoe UI", 12, "bold"), wraplength=800).pack(anchor="w", pady=(12, 3))
         ttk.Label(outer, textvariable=self.stats).pack(anchor="w", pady=(0, 8))
-        self.log = tk.Text(outer, height=7, state="disabled", font=("Consolas", 9), wrap="word")
+        self.log = tk.Text(outer, height=7, state="disabled", font=("Consolas", 11), wrap="word")
         self.log.pack(fill="both", expand=True)
         log_actions = ttk.Frame(outer)
         log_actions.pack(fill="x", pady=(6, 0))
@@ -260,8 +277,43 @@ class App:
         self.log_menu.add_command(label="Скопировать весь журнал", command=self.copy_log)
         self.log_menu.add_command(label="Выделить всё", command=self.select_log)
         self.log.bind("<Button-3>", self.show_log_menu)
-        root.protocol("WM_DELETE_WINDOW", self.close)
+        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+        root.bind("<Unmap>", self.on_minimize)
+        root.bind("<Destroy>", self.on_destroy, add="+")
         root.after(100, self.poll)
+
+    def scroll_window(self, event):
+        if not isinstance(event.widget, tk.Text):
+            self.canvas.yview_scroll(-int(event.delta / 120), "units")
+
+    def start_tray(self):
+        from tray import TrayIcon
+        self.tray = TrayIcon(self.events, f"CSQTT v{APP_VERSION}")
+
+    def hide_to_tray(self):
+        if self.closing:
+            return
+        if self.tray and self.tray.ready.is_set():
+            self.root.withdraw()
+        elif self.tray:
+            self.show_window()
+        else:
+            self.close()
+
+    def on_minimize(self, event):
+        if event.widget is self.root and self.root.state() == "iconic":
+            self.hide_to_tray()
+
+    def show_window(self):
+        if not self.closing:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+
+    def on_destroy(self, event):
+        if event.widget is self.root and self.tray:
+            self.tray.stop()
+            self.tray = None
 
     def select_log(self, event=None):
         self.log.focus_set()
@@ -451,6 +503,9 @@ class App:
         self.background(work)
 
     def stop(self):
+        if self.stopping:
+            return
+        self.stopping = True
         self.session += 1
         processes = [p for p in (self.helper, self.core) if p]
         self.helper = self.core = None
@@ -481,7 +536,10 @@ class App:
         threading.Thread(target=cleanup, daemon=False).start()
 
     def close(self):
+        if self.closing:
+            return
         self.closing = True
+        self.root.withdraw()
         self.stop()
 
     def poll(self):
@@ -510,24 +568,37 @@ class App:
                     self.append(result)
                     self.test_button.configure(state="normal")
             elif kind == "cleaned":
+                self.stopping = False
                 if self.closing:
                     self.root.destroy()
                     return
                 self.status.set("Отключено")
                 self.start_button.configure(state="normal")
+            elif kind == "tray_open":
+                self.show_window()
+            elif kind == "tray_exit":
+                self.close()
+            elif kind == "tray_error":
+                if self.tray:
+                    self.tray.stop()
+                    self.tray = None
+                self.show_window()
+                self.append(f"Не удалось создать значок в трее: {value}")
         self.root.after(100, self.poll)
 
 
 def main():
-    root = tk.Tk()
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except (AttributeError, OSError):
         pass
+    root = tk.Tk()
     ttk.Style().theme_use("vista" if sys.platform == "win32" else "clam")
-    App(root)
+    ui = App(root)
+    if sys.platform == "win32":
+        ui.start_tray()
     if "--smoke" in sys.argv:
-        root.after(700, root.destroy)
+        root.after(700, ui.close)
     root.mainloop()
 
 
