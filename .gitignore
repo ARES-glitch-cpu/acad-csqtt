@@ -8,8 +8,10 @@ dist/
 *.spec
 portable/
 *.zip
+*.zip.sha256
 settings.json
 *.log
 bin/
 packet-proxy/*.exe
 ui-preview.png
+/GIT-RELEASE-LOCAL.md

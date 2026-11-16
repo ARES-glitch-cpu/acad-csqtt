@@ -22,6 +22,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+APP_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 PROFILE = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "CSQTT-Kolenka" / "profile.dat"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -178,7 +179,7 @@ def core_command(profile, packet_port):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("CSQTT — коленка / TCP")
+        root.title(f"CSQTT v{APP_VERSION} — коленка / TCP")
         root.geometry("790x860")
         root.minsize(700, 760)
         self.events = queue.Queue()

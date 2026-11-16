@@ -35,7 +35,7 @@ for tcl in (Path(sys.base_prefix) / "tcl").glob("*"):
 copy_notices(root / "core", "CSQTT")
 copy_notices(root / "core/rust-client/vendor/primp", "primp-vendored")
 copy_notices(root / "core/rust-client/vendor/netstack-smoltcp", "netstack-smoltcp-vendored")
-cargo_home = Path(os.environ.get("CARGO_HOME", str(root / ".tools/cargo")))
+cargo_home = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo")))
 for registry in (cargo_home / "registry/src").glob("*"):
     for crate in registry.iterdir():
         copy_notices(crate, "rust-" + crate.name)
