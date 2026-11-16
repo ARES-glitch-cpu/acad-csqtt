@@ -1341,13 +1341,19 @@ async fn request_configuration(
                                 let _ = sender.try_send(value);
                             }
                             crate::log_error!("[ВОРКЕР #{}] Конфиг получен", config.id);
-                            if config.get_config {
-                                let req = crate::protocol::workers_request(
-                                    &config.password,
-                                    scale.configured,
-                                );
-                                let _ = writer.send_bytes(req.as_bytes()).await;
-                            }
+                            // get_config selects who delivers TUNCONF to the GUI, not
+                            // who may negotiate the worker count. After reconnect the
+                            // server can retain an older count and reject that owner
+                            // before it ever reaches this point. Any admitted worker
+                            // must be able to request the newly configured count.
+                            let req = crate::protocol::workers_request(
+                                &config.password,
+                                scale.configured,
+                            );
+                            writer
+                                .send_bytes(req.as_bytes())
+                                .await
+                                .context("отправка GETWORKERS")?;
                             return Ok(true);
                         }
                         Err(error) => {

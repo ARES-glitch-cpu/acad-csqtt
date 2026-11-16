@@ -10,6 +10,7 @@ repository license. Preserve the repository license when redistributing.
 
 Modifications: explicit authenticated HTTP CONNECT for TURN/TCP/TLS and VK API,
 proxy-only bootstrap DNS over HTTPS, rejection of TURN/UDP in proxy mode,
+worker-count renegotiation on established streams after reconnect,
 native Windows launcher, DPAPI profile storage, and local SOCKS5/HTTP proxies.
 
 The packet proxy uses the WireGuard Go netstack package (MIT) and gVisor

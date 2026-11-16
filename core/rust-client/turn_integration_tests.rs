@@ -42,6 +42,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+#[path = "worker_negotiation_tests.rs"]
+mod worker_negotiation_tests;
+
 const STUN_COOKIE: u32 = 0x2112_a442;
 const ALLOCATE_REQUEST: u16 = 0x0003;
 const ALLOCATE_SUCCESS: u16 = 0x0103;
