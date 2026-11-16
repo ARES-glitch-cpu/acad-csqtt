@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
 PROFILE = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "CSQTT-Kolenka" / "profile.dat"
@@ -244,8 +244,58 @@ class App:
         ttk.Label(outer, textvariable=self.stats).pack(anchor="w", pady=(0, 8))
         self.log = tk.Text(outer, height=7, state="disabled", font=("Consolas", 9), wrap="word")
         self.log.pack(fill="both", expand=True)
+        log_actions = ttk.Frame(outer)
+        log_actions.pack(fill="x", pady=(6, 0))
+        self.copy_log_button = ttk.Button(log_actions, text="Скопировать журнал", command=self.copy_log)
+        self.copy_log_button.pack(side="left")
+        ttk.Button(log_actions, text="Сохранить журнал…", command=self.save_log).pack(side="left", padx=8)
+        ttk.Label(log_actions, text="В журнале: Ctrl+A → Ctrl+C").pack(side="right")
+        self.log.bind("<Control-a>", self.select_log)
+        self.log.bind("<Control-A>", self.select_log)
+        self.log.bind("<Control-c>", lambda event: self.copy_log(selected=True))
+        self.log.bind("<Control-C>", lambda event: self.copy_log(selected=True))
+        self.log_menu = tk.Menu(root, tearoff=False)
+        self.log_menu.add_command(label="Копировать выделение", command=lambda: self.copy_log(selected=True))
+        self.log_menu.add_command(label="Скопировать весь журнал", command=self.copy_log)
+        self.log_menu.add_command(label="Выделить всё", command=self.select_log)
+        self.log.bind("<Button-3>", self.show_log_menu)
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.after(100, self.poll)
+
+    def select_log(self, event=None):
+        self.log.focus_set()
+        self.log.tag_add("sel", "1.0", "end-1c")
+        return "break"
+
+    def copy_log(self, selected=False):
+        # Export the text already masked by append(), never the raw process output.
+        try:
+            text = self.log.get("sel.first", "sel.last") if selected else self.log.get("1.0", "end-1c")
+        except tk.TclError:
+            text = self.log.get("1.0", "end-1c")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.copy_log_button.configure(text="Скопировано")
+        self.root.after(1800, lambda: self.copy_log_button.configure(text="Скопировать журнал"))
+        return "break"
+
+    def save_log(self):
+        filename = filedialog.asksaveasfilename(
+            parent=self.root, title="Сохранить журнал CSQTT", defaultextension=".txt",
+            initialfile="csqtt-log.txt", filetypes=[("Текстовый журнал", "*.txt"), ("Все файлы", "*.*")],
+        )
+        if filename:
+            try:
+                Path(filename).write_text(self.log.get("1.0", "end-1c"), encoding="utf-8")
+            except OSError as error:
+                messagebox.showerror("Не удалось сохранить журнал", str(error), parent=self.root)
+
+    def show_log_menu(self, event):
+        try:
+            self.log_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.log_menu.grab_release()
+        return "break"
 
     def field(self, frame, label, key, row, secret=False):
         frame.columnconfigure(1, weight=1)
@@ -314,7 +364,7 @@ class App:
             self.status.set("Подключение: получаю TURN-сессию и конфигурацию сервера…")
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
-            self.append("Запущено ядро: TCP через HTTP CONNECT, TURN :443, без прямого выхода.")
+            self.append(f"Запущено ядро: TCP через HTTP CONNECT, TURN :443. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
         except Exception as error:
             messagebox.showerror("Не удалось начать подключение", str(error))
 

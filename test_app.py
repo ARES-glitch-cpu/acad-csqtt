@@ -4,8 +4,10 @@ import json
 import os
 import socket
 import subprocess
+import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 import app
 
@@ -95,6 +97,42 @@ class ClientTests(unittest.TestCase):
             if process.poll() is None:
                 process.kill()
                 process.communicate()
+
+
+@unittest.skipUnless(os.name == "nt", "Windows native GUI")
+class LogExportTests(unittest.TestCase):
+    def setUp(self):
+        self.root = app.tk.Tk()
+        self.root.withdraw()
+        with patch.object(app, "load_profile", return_value=app.Profile()):
+            self.ui = app.App(self.root)
+        self.ui.secrets = ["test-only-password", "test-only-hash"]
+        self.ui.append("Ошибка потока 18: test-only-password test-only-hash")
+        self.expected = self.ui.log.get("1.0", "end-1c")
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def test_copy_disabled_log_and_selection(self):
+        self.ui.copy_log()
+        self.assertEqual(self.root.clipboard_get(), self.expected)
+        self.assertNotIn("test-only-password", self.root.clipboard_get())
+        self.assertNotIn("test-only-hash", self.root.clipboard_get())
+        self.assertIn("[скрыто]", self.root.clipboard_get())
+        self.ui.log.tag_add("sel", "1.0", "1.5")
+        selected = self.ui.log.get("sel.first", "sel.last")
+        self.ui.copy_log(selected=True)
+        self.assertEqual(self.root.clipboard_get(), selected)
+        self.ui.select_log()
+        self.assertEqual(self.ui.log.get("sel.first", "sel.last"), self.expected)
+        self.assertEqual(self.ui.log.cget("state"), "disabled")
+
+    def test_save_masked_utf8_log(self):
+        with tempfile.TemporaryDirectory() as directory:
+            filename = app.Path(directory) / "журнал.txt"
+            with patch.object(app.filedialog, "asksaveasfilename", return_value=str(filename)):
+                self.ui.save_log()
+            self.assertEqual(filename.read_text(encoding="utf-8"), self.expected)
 
 
 if __name__ == "__main__":
