@@ -20,6 +20,7 @@ class Profile:
     srtp: str = "auto"
     generation: str = "0"
     salt: str = ""
+    mode: str = "proxy"
 
     def validate(self):
         host, port = split_address(self.server)
@@ -47,6 +48,8 @@ class Profile:
             raise ValueError("Число потоков: от 1 до 100.")
         if not 0 <= int(self.generation) < 2**64:
             raise ValueError("Поколение: целое неотрицательное число.")
+        if self.mode not in ("proxy", "tun"):
+            raise ValueError("Режим подключения должен быть proxy или tun.")
         if self.obfs not in ("unified", "audio", "video") or self.srtp not in ("auto", "wrap", "dtls"):
             raise ValueError("Неверный режим протокола.")
         return hashes

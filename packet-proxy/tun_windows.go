@@ -1,0 +1,457 @@
+//go:build windows
+
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"golang.org/x/sys/windows"
+	"golang.zx2c4.com/wireguard/tun"
+)
+
+const (
+	csqttTunName = "CSQTT"
+	tunMTU       = 1280
+)
+
+type tunRecoveryState struct {
+	InterfaceName  string
+	InterfaceIndex int
+	ProxyIP        string
+	AddProxyRoute  bool
+	ParentPID      uint32
+}
+
+type routeInfo struct {
+	InterfaceIndex int
+	Gateway        string
+	PrefixLength   int
+	Metric         int
+}
+
+func runTunMode(core, ip, dns, bypassIP string) error {
+	if err := requireElevated(); err != nil {
+		return err
+	}
+	if err := recoverTunStateOnlyIfOrphaned(); err != nil {
+		return fmt.Errorf("не удалось очистить предыдущую TUN-сессию: %w", err)
+	}
+	if err := loopback(core); err != nil {
+		return err
+	}
+	localIP, err := netip.ParseAddr(ip)
+	if err != nil || !localIP.Is4() {
+		return fmt.Errorf("--ip должен быть IPv4-адресом из TUNCONF")
+	}
+	proxyIP, err := netip.ParseAddr(bypassIP)
+	if err != nil || !proxyIP.Is4() {
+		return fmt.Errorf("--bypass-ip должен содержать IPv4 корпоративного HTTP-прокси")
+	}
+	dnsServers, err := parseDNSServers(dns)
+	if err != nil {
+		return err
+	}
+
+	device, err := tun.CreateTUN(csqttTunName, tunMTU)
+	if err != nil {
+		return fmt.Errorf("не удалось создать Wintun-адаптер %s: %w", csqttTunName, err)
+	}
+	defer device.Close()
+
+	ifName, err := device.Name()
+	if err != nil {
+		return fmt.Errorf("не удалось получить имя Wintun: %w", err)
+	}
+	iface, err := waitForInterface(ifName, 10*time.Second)
+	if err != nil {
+		return err
+	}
+
+	// Capture the physical route to the corporate proxy before installing /1 routes.
+	physicalRoute, err := findBestIPv4Route(proxyIP)
+	if err != nil {
+		return fmt.Errorf("не удалось определить физический маршрут к HTTP-прокси %s: %w", proxyIP, err)
+	}
+	addProxyRoute := physicalRoute.PrefixLength < 32 || physicalRoute.InterfaceIndex != iface.Index
+	state := tunRecoveryState{
+		InterfaceName: ifName,
+		InterfaceIndex: iface.Index,
+		ProxyIP: proxyIP.String(),
+		AddProxyRoute: addProxyRoute,
+		ParentPID: uint32(os.Getppid()),
+	}
+	stateFile, err := writeTunRecoveryState(state)
+	if err != nil {
+		return err
+	}
+	cleanupNeeded := true
+	defer func() {
+		if cleanupNeeded {
+			if err := cleanupTunState(state, stateFile); err != nil {
+				fmt.Fprintln(os.Stderr, "TUN cleanup warning:", err)
+			}
+		}
+	}()
+
+	if err := runNetsh("interface", "ipv4", "set", "address",
+		"name="+ifName, "source=static", "address="+localIP.String(),
+		"mask=255.255.255.255", "gateway=none", "store=active"); err != nil {
+		return fmt.Errorf("не удалось назначить TUN IP: %w", err)
+	}
+	if err := setTunDNS(ifName, dnsServers); err != nil {
+		return fmt.Errorf("не удалось настроить DNS TUN: %w", err)
+	}
+
+	if addProxyRoute {
+		gateway := physicalRoute.Gateway
+		if gateway == "" {
+			gateway = "0.0.0.0"
+		}
+		if err := runRoute("ADD", proxyIP.String(), "MASK", "255.255.255.255",
+			gateway, "METRIC", "1", "IF", strconv.Itoa(physicalRoute.InterfaceIndex)); err != nil {
+			return fmt.Errorf("не удалось закрепить маршрут к корпоративному прокси вне TUN: %w", err)
+		}
+	}
+
+	if err := runRoute("ADD", "0.0.0.0", "MASK", "128.0.0.0",
+		"0.0.0.0", "METRIC", "1", "IF", strconv.Itoa(iface.Index)); err != nil {
+		return fmt.Errorf("не удалось добавить первый системный маршрут TUN: %w", err)
+	}
+	if err := runRoute("ADD", "128.0.0.0", "MASK", "128.0.0.0",
+		"0.0.0.0", "METRIC", "1", "IF", strconv.Itoa(iface.Index)); err != nil {
+		return fmt.Errorf("не удалось добавить второй системный маршрут TUN: %w", err)
+	}
+
+	coreAddress, err := net.ResolveUDPAddr("udp4", core)
+	if err != nil {
+		return fmt.Errorf("неверный адрес локального CSQTT-порта: %w", err)
+	}
+	wire, err := net.DialUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)}, coreAddress)
+	if err != nil {
+		return fmt.Errorf("не удалось подключиться к локальному CSQTT-порту: %w", err)
+	}
+	defer wire.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go watchParentProcess(state.ParentPID, cancel)
+	go watchStopCommand(cancel)
+
+	errCh := make(chan error, 2)
+	go func() {
+		buffer := make([]byte, 65535)
+		buffers := [][]byte{buffer}
+		sizes := make([]int, 1)
+		for {
+			count, readErr := device.Read(buffers, sizes, 0)
+			if readErr != nil {
+				errCh <- fmt.Errorf("чтение Wintun: %w", readErr)
+				return
+			}
+			for i := 0; i < count; i++ {
+				if _, writeErr := wire.Write(buffers[i][:sizes[i]]); writeErr != nil {
+					errCh <- fmt.Errorf("передача IP-пакета в CSQTT: %w", writeErr)
+					return
+				}
+			}
+		}
+	}()
+	go func() {
+		buffer := make([]byte, 65535)
+		for {
+			count, readErr := wire.Read(buffer)
+			if readErr != nil {
+				errCh <- fmt.Errorf("приём IP-пакета от CSQTT: %w", readErr)
+				return
+			}
+			if _, writeErr := device.Write([][]byte{buffer[:count]}, 0); writeErr != nil {
+				errCh <- fmt.Errorf("передача IP-пакета в Wintun: %w", writeErr)
+				return
+			}
+		}
+	}()
+
+	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\n", ifName, localIP, strings.Join(dnsServers, ","))
+	select {
+	case <-ctx.Done():
+		fmt.Println("TUN_STOPPED")
+		cleanupNeeded = false
+		if err := cleanupTunState(state, stateFile); err != nil {
+			return fmt.Errorf("ошибка восстановления сетевых настроек: %w", err)
+		}
+		return nil
+	case err := <-errCh:
+		cancel()
+		return err
+	}
+}
+
+func requireElevated() error {
+	cmd := exec.Command("net", "session")
+	if err := cmd.Run(); err != nil {
+		return errors.New("для режима TUN необходим запуск от имени администратора")
+	}
+	return nil
+}
+
+func parseDNSServers(value string) ([]string, error) {
+	seen := map[string]bool{}
+	var result []string
+	for _, item := range strings.Split(value, ",") {
+		address, err := netip.ParseAddr(strings.TrimSpace(item))
+		if err == nil && address.Is4() && !seen[address.String()] {
+			seen[address.String()] = true
+			result = append(result, address.String())
+		}
+	}
+	if len(result) == 0 {
+		return nil, errors.New("TUNCONF не содержит корректный DNS IPv4")
+	}
+	return result, nil
+}
+
+func waitForInterface(name string, timeout time.Duration) (*net.Interface, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if iface, err := net.InterfaceByName(name); err == nil {
+			return iface, nil
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("Windows не зарегистрировала интерфейс %q за %s", name, timeout)
+}
+
+func setTunDNS(name string, servers []string) error {
+	args := []string{"interface", "ipv4", "set", "dnsservers",
+		"name=" + name, "source=static", "address=" + servers[0], "validate=no"}
+	if err := runNetsh(args...); err != nil {
+		return err
+	}
+	for index, server := range servers[1:] {
+		if err := runNetsh("interface", "ipv4", "add", "dnsservers",
+			"name="+name, "address="+server, "index="+strconv.Itoa(index+2), "validate=no"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func findBestIPv4Route(target netip.Addr) (routeInfo, error) {
+	output, err := exec.Command("route.exe", "print", "-4").CombinedOutput()
+	if err != nil {
+		return routeInfo{}, fmt.Errorf("route print: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	indexByAddress := map[string]int{}
+	interfaces, _ := net.Interfaces()
+	for _, iface := range interfaces {
+		addresses, _ := iface.Addrs()
+		for _, raw := range addresses {
+			prefix, parseErr := netip.ParsePrefix(raw.String())
+			if parseErr == nil && prefix.Addr().Is4() {
+				indexByAddress[prefix.Addr().String()] = iface.Index
+			}
+		}
+	}
+
+	best := routeInfo{PrefixLength: -1, Metric: int(^uint(0) >> 1)}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		destination, e1 := netip.ParseAddr(fields[0])
+		mask, e2 := netip.ParseAddr(fields[1])
+		interfaceIP, e3 := netip.ParseAddr(fields[3])
+		metric, e4 := strconv.Atoi(fields[4])
+		if e1 != nil || e2 != nil || e3 != nil || e4 != nil ||
+			!destination.Is4() || !mask.Is4() || !interfaceIP.Is4() {
+			continue
+		}
+		maskBytes := mask.As4()
+		prefixLength, bitCount := net.IPv4Mask(maskBytes[0], maskBytes[1], maskBytes[2], maskBytes[3]).Size()
+		if bitCount != 32 {
+			continue
+		}
+		prefix := netip.PrefixFrom(destination, prefixLength)
+		if !prefix.Contains(target) {
+			continue
+		}
+		ifIndex := indexByAddress[interfaceIP.String()]
+		if ifIndex == 0 {
+			continue
+		}
+		gateway := fields[2]
+		if strings.EqualFold(gateway, "On-link") {
+			gateway = "0.0.0.0"
+		} else if address, parseErr := netip.ParseAddr(gateway); parseErr != nil || !address.Is4() {
+			continue
+		}
+		if prefixLength > best.PrefixLength ||
+			(prefixLength == best.PrefixLength && metric < best.Metric) {
+			best = routeInfo{InterfaceIndex: ifIndex, Gateway: gateway, PrefixLength: prefixLength, Metric: metric}
+		}
+	}
+	if best.InterfaceIndex == 0 {
+		return routeInfo{}, fmt.Errorf("не найден подходящий физический маршрут к %s", target)
+	}
+	return best, nil
+}
+
+func runRoute(args ...string) error {
+	output, err := exec.Command("route.exe", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("route %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func runNetsh(args ...string) error {
+	output, err := exec.Command("netsh.exe", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("netsh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func tunStatePath() (string, error) {
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		var err error
+		base, err = os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+	}
+	directory := filepath.Join(base, "CSQTT")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return "", err
+	}
+	return filepath.Join(directory, "tun-state.json"), nil
+}
+
+func writeTunRecoveryState(state tunRecoveryState) (string, error) {
+	path, err := tunStatePath()
+	if err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	temp := path + ".tmp"
+	if err := os.WriteFile(temp, data, 0600); err != nil {
+		return "", err
+	}
+	if err := os.Rename(temp, path); err != nil {
+		_ = os.Remove(temp)
+		return "", err
+	}
+	return path, nil
+}
+
+func recoverTunState() (bool, error) {
+	path, err := tunStatePath()
+	if err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var state tunRecoveryState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return false, fmt.Errorf("повреждён файл восстановления TUN: %w", err)
+	}
+	if state.ParentPID != 0 && processIsRunning(state.ParentPID) {
+		return false, nil
+	}
+	if err := cleanupTunState(state, path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func recoverTunStateOnlyIfOrphaned() error {
+	_, err := recoverTunState()
+	return err
+}
+
+func processIsRunning(pid uint32) bool {
+	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, pid)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(handle)
+	status, err := windows.WaitForSingleObject(handle, 0)
+	return err == nil && status == windows.WAIT_TIMEOUT
+}
+
+func cleanupTunState(state tunRecoveryState, path string) error {
+	var problems []string
+	if state.InterfaceIndex > 0 {
+		_ = runRoute("DELETE", "0.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
+		_ = runRoute("DELETE", "128.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
+		if state.AddProxyRoute && state.ProxyIP != "" {
+			_ = runRoute("DELETE", state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.InterfaceIndex))
+		}
+	}
+	if state.InterfaceName != "" {
+		if err := runNetsh("interface", "ipv4", "set", "dnsservers",
+			"name="+state.InterfaceName, "source=dhcp"); err != nil {
+			problems = append(problems, err.Error())
+		}
+		if err := runNetsh("interface", "ipv4", "set", "address",
+			"name="+state.InterfaceName, "source=dhcp"); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func watchStopCommand(cancel context.CancelFunc) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if strings.EqualFold(strings.TrimSpace(scanner.Text()), "STOP") {
+			cancel()
+			return
+		}
+	}
+}
+
+func watchParentProcess(pid uint32, cancel context.CancelFunc) {
+	if pid == 0 {
+		return
+	}
+	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, pid)
+	if err != nil {
+		return
+	}
+	go func() {
+		defer windows.CloseHandle(handle)
+		_, _ = windows.WaitForSingleObject(handle, windows.INFINITE)
+		cancel()
+	}()
+}

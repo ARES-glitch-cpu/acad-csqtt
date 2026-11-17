@@ -315,6 +315,16 @@ class DesktopUI:
         body.columnconfigure(1, weight=1, uniform="settings")
         transport = self.section(body, "Параметры туннеля", "Режимы должны соответствовать настройкам сервера.")
         transport.grid(row=0, column=0, sticky="new", padx=(0, 14))
+        label(transport.body, "Режим подключения", size=9, color=MUTED).pack(anchor="w", pady=(8, 5))
+        mode_choice = tk.StringVar(value="TUN" if self.app.vars["mode"].get() == "tun" else "Прокси")
+        mode_box = ttk.Combobox(transport.body, textvariable=mode_choice,
+                                values=("Прокси", "TUN"), state="readonly")
+        mode_box.pack(fill="x")
+        mode_box.bind("<<ComboboxSelected>>", lambda _event: self.app.vars["mode"].set(
+            "tun" if mode_choice.get() == "TUN" else "proxy"))
+        label(transport.body,
+              "Прокси — SOCKS5/HTTP для выбранных приложений. TUN — системный IPv4 через Wintun; нужен запуск от имени администратора. IPv6 пока не перенаправляется.",
+              color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(7, 4))
         self.field(transport.body, "Потоки · workers", "workers")
         for title, key, values in (("Обфускация", "obfs", ("unified", "audio", "video")),
                                    ("SRTP", "srtp", ("auto", "wrap", "dtls"))):

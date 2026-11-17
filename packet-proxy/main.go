@@ -27,7 +27,32 @@ func main() {
 	dns := flag.String("dns", "1.1.1.1", "Tunnel DNS IPv4, comma separated")
 	socks := flag.String("socks", "127.0.0.1:1080", "SOCKS5 listener")
 	web := flag.String("http", "127.0.0.1:8080", "HTTP proxy listener")
+	mode := flag.String("mode", "proxy", "proxy or tun")
+	bypassIP := flag.String("bypass-ip", "", "Corporate HTTP proxy IPv4 address to keep outside the TUN")
+	recoverTUN := flag.Bool("recover-tun", false, "Restore routes and DNS left by an interrupted TUN session")
 	flag.Parse()
+	if *recoverTUN {
+		recovered, err := recoverTunState()
+		if err != nil {
+			log.Fatal(err)
+		}
+		if recovered {
+			fmt.Println("TUN_RECOVERED")
+		} else {
+			fmt.Println("NO_TUN_STATE")
+		}
+		return
+	}
+	if *mode == "tun" {
+		if err := runTunMode(*core, *ip, *dns, *bypassIP); err != nil {
+			log.Print("TUN: ", err)
+			return
+		}
+		return
+	}
+	if *mode != "proxy" {
+		log.Fatal("mode must be proxy or tun")
+	}
 	localIP, err := netip.ParseAddr(*ip)
 	if err != nil || !localIP.Is4() {
 		log.Fatal("--ip must be an IPv4 assigned by CSQTT")
