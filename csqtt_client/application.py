@@ -256,8 +256,9 @@ class App:
             args += ["--socks", f"127.0.0.1:{profile.socks_port}",
                      "--http", f"127.0.0.1:{profile.http_port}"]
         try:
-            self.helper = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                           text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+            self.helper = subprocess.Popen(args, stdin=subprocess.PIPE if profile.mode == "tun" else None,
+                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                           encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
             self.read_process(self.helper, "helper", self.session)
         except Exception as error:
             self.append(f"Не запущен локальный прокси: {error}")
@@ -354,7 +355,7 @@ class App:
         def cleanup():
             for process in processes:
                 try:
-                    process.wait(timeout=8)
+                    process.wait(timeout=8 if process.stdin else 3)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
