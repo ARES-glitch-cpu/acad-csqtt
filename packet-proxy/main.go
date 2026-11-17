@@ -29,6 +29,7 @@ func main() {
 	web := flag.String("http", "127.0.0.1:8080", "HTTP proxy listener")
 	mode := flag.String("mode", "proxy", "proxy or tun")
 	bypassIP := flag.String("bypass-ip", "", "Corporate HTTP proxy IPv4 address to keep outside the TUN")
+	tunUDS := flag.String("tun-uds", "", "Abstract Unix socket name used to pass the native TUN file descriptor to CSQTT")
 	recoverTUN := flag.Bool("recover-tun", false, "Restore routes and DNS left by an interrupted TUN session")
 	flag.Parse()
 	if *recoverTUN {
@@ -44,7 +45,7 @@ func main() {
 		return
 	}
 	if *mode == "tun" {
-		if err := runTunMode(*core, *ip, *dns, *bypassIP); err != nil {
+		if err := runTunMode(*core, *ip, *dns, *bypassIP, *tunUDS); err != nil {
 			log.Fatal("TUN: ", err)
 		}
 		return
