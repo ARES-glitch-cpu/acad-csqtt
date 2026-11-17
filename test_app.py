@@ -157,6 +157,22 @@ class LogExportTests(unittest.TestCase):
         self.ui.ui.copy_endpoint("http_port", "HTTP")
         self.assertEqual(self.root.clipboard_get(), "http://127.0.0.1:8181")
 
+    def test_proxy_check_result_is_shown_on_connection_page(self):
+        with patch.object(self.ui, "background", side_effect=lambda work: work()):
+            with patch.object(app, "proxy_connect"):
+                self.ui.check_proxy()
+                self.ui.poll()
+            self.assertEqual(self.ui.ui.page, "connection")
+            self.assertIn("доступен", self.ui.ui.proxy_feedback.cget("text"))
+            self.assertEqual(self.ui.ui.proxy_feedback.cget("fg"), "#79c9a4")
+            with patch.object(app, "proxy_connect", side_effect=ValueError("Ошибка авторизации 407")):
+                self.ui.check_proxy()
+                self.ui.poll()
+            self.assertEqual(self.ui.ui.page, "connection")
+            self.assertIn("407", self.ui.ui.proxy_feedback.cget("text"))
+            self.assertEqual(self.ui.ui.proxy_feedback.cget("fg"), "#df9499")
+            self.assertFalse(self.ui.check_proxy_button.instate(["disabled"]))
+
 
 @unittest.skipUnless(os.name == "nt", "Windows tray")
 class TrayTests(unittest.TestCase):
@@ -197,11 +213,24 @@ class TrayTests(unittest.TestCase):
             opened.start()
             opened.join()
             pump_until(lambda: root.state() == "normal")
+            self.assertTrue(ui.ui.chrome.previous)
+            ui.ui.maximize_button.invoke()
+            pump_until(lambda: root.state() == "zoomed")
+            ui.ui.maximize_button.invoke()
+            pump_until(lambda: root.state() == "normal")
+            ui.ui.minimize_button.invoke()
+            pump_until(lambda: root.state() == "withdrawn")
+            ui.show_window()
+            pump_until(lambda: root.state() == "normal")
             root.iconify()
             pump_until(lambda: root.state() == "withdrawn")
             ui.show_window()
             root.update()
             root.tk.call(root.protocol("WM_DELETE_WINDOW"))
+            self.assertEqual(root.state(), "withdrawn")
+            ui.show_window()
+            pump_until(lambda: root.state() == "normal")
+            ui.ui.hide_button.invoke()
             self.assertEqual(root.state(), "withdrawn")
             self.assertTrue(all(p.poll() is None for p in processes))
             ui.stop()

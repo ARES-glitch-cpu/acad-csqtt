@@ -239,6 +239,7 @@ class App:
 
     def on_destroy(self, event):
         if event.widget is self.root:
+            self.ui.chrome.stop()
             for callback in self.root.tk.call("after", "info"):
                 self.root.after_cancel(callback)
             if self.tray:
@@ -307,15 +308,17 @@ class App:
     def check_proxy(self):
         profile = self.profile()
         self.check_proxy_button.configure(state="disabled")
+        self.ui.show_proxy_result("checking", "Проверяю прокси…")
         def work():
             try:
                 target = f"{profile.turn.strip() or 'dns.google'}:443"
                 proxy_connect(profile, target)
-                self.events.put(("message", f"CONNECT {target}: успешно. Это проверка прокси, доступность csqtt проверяется при подключении."))
+                self.events.put(("proxy_result", (True, f"Прокси {profile.proxy} доступен. CONNECT :443 разрешён.")))
             except Exception as error:
-                self.events.put(("message", str(error)))
-            finally:
-                self.events.put(("proxy_checked", None))
+                message = str(error)
+                if profile.proxy_password:
+                    message = message.replace(profile.proxy_password, "[скрыто]")
+                self.events.put(("proxy_result", (False, f"Не удалось подключиться к прокси {profile.proxy}.\n{message}")))
         self.background(work)
 
     def start(self):
@@ -501,7 +504,10 @@ class App:
                     self.stop()
             elif kind == "message":
                 self.append(value)
-            elif kind == "proxy_checked":
+            elif kind == "proxy_result":
+                success, message = value
+                self.ui.show_proxy_result("success" if success else "error", message)
+                self.append(message)
                 self.check_proxy_button.configure(state="normal")
             elif kind == "internet":
                 session, result, succeeded = value

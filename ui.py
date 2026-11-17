@@ -1,5 +1,6 @@
 """Graphite desktop interface. Connection and process management stay in app.py."""
 import ctypes
+from functools import lru_cache
 import tkinter as tk
 from tkinter import font as tk_font, ttk
 
@@ -18,11 +19,44 @@ PRIMARY = "#e0e1e5"
 MINT = "#79c9a4"
 AMBER = "#dab877"
 RED = "#df9499"
+HEADER = "#18191c"
+
+
+def ui_font(size=10, bold=False):
+    # Windows exposes the bundled 600 face as a separate family. Do not synthesize 700.
+    return ("Nunito Sans SemiBold" if bold else "Nunito Sans", size, "normal")
+
+
+@lru_cache(maxsize=64)
+def surface_tile(radius, fill, outline, background):
+    size, aa = radius * 2 + 4, 4
+    image = Image.new("RGB", (size * aa, size * aa), background)
+    ImageDraw.Draw(image).rounded_rectangle((0, 0, size*aa-1, size*aa-1),
+        radius=radius*aa, fill=fill, outline=outline, width=aa)
+    return image.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def rounded_surface(width, height, radius, fill=PANEL, outline=SOFT, background=BG):
+    radius = max(1, min(radius, width // 2, height // 2))
+    tile = surface_tile(radius, fill, outline, background)
+    end = tile.width
+    image = Image.new("RGB", (width, height), fill)
+    drawing = ImageDraw.Draw(image)
+    drawing.line((radius, 0, width-radius-1, 0), fill=outline)
+    drawing.line((radius, height-1, width-radius-1, height-1), fill=outline)
+    drawing.line((0, radius, 0, height-radius-1), fill=outline)
+    drawing.line((width-1, radius, width-1, height-radius-1), fill=outline)
+    for source, target in (((0, 0, radius, radius), (0, 0)),
+                           ((end-radius, 0, end, radius), (width-radius, 0)),
+                           ((0, end-radius, radius, end), (0, height-radius)),
+                           ((end-radius, end-radius, end, end), (width-radius, height-radius))):
+        image.paste(tile.crop(source), target)
+    return image
 
 
 def label(parent, text=None, variable=None, size=10, color=TEXT, bold=False, **kwargs):
     return tk.Label(parent, text=text, textvariable=variable, bg=parent.cget("bg"), fg=color,
-                    font=("Nunito Sans", size, "bold" if bold else "normal"), anchor=kwargs.pop("anchor", "w"), **kwargs)
+                    font=ui_font(size, bold), anchor=kwargs.pop("anchor", "w"), **kwargs)
 
 
 def frame(parent, bg=None, **kwargs):
@@ -30,22 +64,32 @@ def frame(parent, bg=None, **kwargs):
 
 
 class Panel(tk.Canvas):
-    def __init__(self, parent, padding=20, **kwargs):
+    def __init__(self, parent, padding=20, radius=18, stretch=False, fill=PANEL, outline=SOFT, **kwargs):
         super().__init__(parent, bg=parent.cget("bg"), highlightthickness=0, bd=0, **kwargs)
         self.padding = padding
-        self.body = tk.Frame(self, bg=PANEL)
-        self.window = self.create_window(padding, padding, window=self.body, anchor="nw")
+        self.fill, self.outline = fill, outline
+        self.radius = round(radius * max(1, self.winfo_fpixels("1i") / 96))
+        self.stretch = stretch
+        self.inset_y = max(padding, self.radius) if stretch else padding
+        self.surface = None
+        self.last_size = None
+        self.body = tk.Frame(self, bg=fill)
+        self.surface_id = self.create_image(0, 0, anchor="nw")
+        self.window = self.create_window(padding, self.inset_y, window=self.body, anchor="nw")
         self.bind("<Configure>", self.resize)
-        self.body.bind("<Configure>", lambda event: self.configure(height=self.body.winfo_reqheight() + 2 * padding))
+        if not stretch:
+            self.body.bind("<Configure>", lambda event: self.configure(height=self.body.winfo_reqheight() + 2 * padding))
 
     def resize(self, event):
-        w, h, r = event.width - 1, event.height - 1, 14
-        self.delete("surface")
-        self.create_polygon(r, 0, w-r, 0, w, 0, w, r, w, h-r, w, h, w-r, h,
-                            r, h, 0, h, 0, h-r, 0, r, 0, 0,
-                            smooth=True, fill=PANEL, outline=SOFT, tags="surface")
-        self.tag_lower("surface")
+        if event.width < 2 or event.height < 2 or self.last_size == (event.width, event.height):
+            return
+        self.last_size = (event.width, event.height)
+        image = rounded_surface(event.width, event.height, self.radius, self.fill, self.outline, self.cget("bg"))
+        self.surface = ImageTk.PhotoImage(image, master=self)
+        self.itemconfigure(self.surface_id, image=self.surface)
         self.itemconfigure(self.window, width=max(1, event.width - 2 * self.padding))
+        if self.stretch:
+            self.itemconfigure(self.window, height=max(1, event.height - 2 * self.inset_y))
 
 
 class ScrollPage(tk.Frame):
@@ -76,6 +120,7 @@ class DesktopUI:
         self.images = []
         self.entries = {}
         self.secret_buttons = {}
+        self.scale = max(1, root.winfo_fpixels("1i") / 96)
         if hasattr(ctypes, "windll"):
             for path in (directory / "assets/fonts").glob("*.ttf"):
                 ctypes.windll.gdi32.AddFontResourceExW(str(path), 0x10, None)
@@ -88,9 +133,11 @@ class DesktopUI:
         height = min(int(900 * scale), root.winfo_screenheight()-100)
         root.geometry(f"{width}x{height}")
         root.minsize(min(980, width), min(700, height))
-        root.after_idle(self.dark_titlebar)
+        from window_chrome import WindowChrome
+        self.chrome = WindowChrome(root, scale)
+        self.title_bar(version)
 
-        sidebar = Panel(root, padding=9, width=max(100, int(76 * scale)))
+        sidebar = Panel(root, padding=9, radius=24, stretch=True, width=max(86, int(68 * scale)))
         sidebar.pack(side="left", fill="y", padx=(18, 0), pady=18)
         sidebar.pack_propagate(False)
         rail = sidebar.body
@@ -100,9 +147,10 @@ class DesktopUI:
         for key, text, icon in (("connection", "Туннель", "connection"),
                                 ("settings", "Опции", "settings"), ("logs", "Журнал", "logs")):
             self.nav_images[key] = (self.icon(icon), self.icon(icon, "#25262b"))
-            button = ttk.Button(rail, text=text, image=self.nav_images[key][0], compound="top",
+            button = ttk.Button(rail, text=text, image=self.nav_images[key][0], compound="none",
                                 style="Nav.TButton", command=lambda k=key: self.show_page(k), takefocus=True)
-            button.pack(fill="x", pady=5)
+            button.pack(pady=6)
+            self.tooltip(button, text)
             self.nav[key] = button
         label(rail, f"v{version}", size=8, color=DIM, anchor="center").pack(side="bottom", fill="x", pady=(8, 2))
         label(rail, "TCP / 443", size=8, color=MUTED, anchor="center").pack(side="bottom", fill="x")
@@ -113,7 +161,7 @@ class DesktopUI:
         header.pack(fill="x", pady=(0, 18))
         titles = frame(header)
         titles.pack(side="left", fill="x", expand=True)
-        self.heading = label(titles, "Подключение", size=23, bold=True)
+        self.heading = label(titles, "Подключение", size=21, bold=True)
         self.heading.pack(anchor="w")
         self.subtitle = label(titles, "Интернет через ваш сервер csqtt и корпоративный прокси.", color=MUTED)
         self.subtitle.pack(anchor="w", pady=(5, 0))
@@ -186,19 +234,89 @@ class DesktopUI:
         root.bind("<Configure>", resize_window, add="+")
         root.bind("<MouseWheel>", self.scroll_page)
 
+    def title_bar(self, version):
+        bar = tk.Frame(self.root, bg=HEADER, height=round(46*self.scale))
+        bar.pack(side="top", fill="x")
+        bar.pack_propagate(False)
+        tk.Frame(self.root, height=1, bg=SOFT).pack(side="top", fill="x")
+        brand = label(bar, "CSQTT", size=12, bold=True)
+        brand.pack(side="left", padx=(22, 12))
+        label(bar, f"v{version}", size=8, color=DIM).pack(side="left")
+        drag_space = frame(bar)
+        drag_space.pack(side="left", fill="both", expand=True)
+        for widget in (bar, brand, drag_space):
+            widget.bind("<ButtonPress-1>", self.chrome.drag)
+            widget.bind("<Double-Button-1>", self.chrome.maximize)
+        controls = frame(bar)
+        controls.pack(side="right", fill="y", padx=8, pady=7)
+        for text, hint, command, style in (("—", "Свернуть в трей", self.app.hide_to_tray, "Chrome.TButton"),
+                      ("□", "Развернуть / восстановить", self.chrome.maximize, "Chrome.TButton"),
+                      ("×", "Скрыть в трей", self.app.hide_to_tray, "Close.Chrome.TButton")):
+            button = ttk.Button(controls, text=text, width=2, command=command, style=style)
+            button.pack(side="left", fill="y", padx=2)
+            self.tooltip(button, hint)
+            if text == "—":
+                self.minimize_button = button
+            elif text == "□":
+                self.maximize_button = button
+            else:
+                self.hide_button = button
+        self.titlebar = bar
+
+    def tooltip(self, widget, text):
+        pending, popup = None, None
+        def hide(event=None):
+            nonlocal pending, popup
+            if pending:
+                self.root.after_cancel(pending)
+                pending = None
+            if popup:
+                popup.destroy()
+                popup = None
+        def show():
+            nonlocal popup, pending
+            pending = None
+            popup = tk.Toplevel(self.root)
+            popup.overrideredirect(True)
+            popup.configure(bg=LINE)
+            tk.Label(popup, text=text, bg=FIELD, fg=TEXT, font=ui_font(9), padx=10, pady=5).pack(padx=1, pady=1)
+            x = min(widget.winfo_rootx()+widget.winfo_width()+7, self.root.winfo_screenwidth()-240)
+            popup.geometry(f"+{x}+{widget.winfo_rooty()+widget.winfo_height()+4}")
+        def enter(event):
+            nonlocal pending
+            hide()
+            pending = self.root.after(450, show)
+        for event in ("<Enter>", "<FocusIn>"):
+            widget.bind(event, enter, add="+")
+        for event in ("<Leave>", "<FocusOut>", "<ButtonPress-1>"):
+            widget.bind(event, hide, add="+")
+
     def style(self):
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
             tk_font.nametofont(name, root=self.root).configure(family="Nunito Sans", size=10)
         style = ttk.Style(self.root)
         style.theme_use("clam")
-        style.configure(".", background=PANEL, foreground=TEXT, font=("Nunito Sans", 10), bordercolor=LINE)
+        style.configure(".", background=PANEL, foreground=TEXT, font=ui_font(), bordercolor=LINE)
         style.configure("TEntry", fieldbackground=FIELD, foreground=TEXT, insertcolor=TEXT,
-                        bordercolor=LINE, lightcolor=LINE, darkcolor=LINE, padding=(10, 8), borderwidth=1)
+                        bordercolor=LINE, lightcolor=LINE, darkcolor=LINE, padding=0, borderwidth=0)
         style.map("TEntry", bordercolor=[("focus", "#8e929d")], lightcolor=[("focus", "#8e929d")])
         style.configure("TCombobox", fieldbackground=FIELD, background=FIELD, foreground=TEXT,
-                        arrowcolor=MUTED, bordercolor=LINE, lightcolor=LINE, darkcolor=LINE, padding=(10, 8))
+                        arrowcolor=MUTED, bordercolor=LINE, lightcolor=LINE, darkcolor=LINE, padding=0)
         style.map("TCombobox", fieldbackground=[("readonly", FIELD)], foreground=[("readonly", TEXT)],
                   selectbackground=[("readonly", FIELD)], selectforeground=[("readonly", TEXT)])
+        radius, inset_y = round(10*self.scale), round(8*self.scale)
+        images = []
+        for outline in (LINE, "#8e929d", SOFT):
+            photo = ImageTk.PhotoImage(surface_tile(radius, FIELD, outline, PANEL), master=self.root)
+            self.images.append(photo)
+            images.append(photo)
+        style.element_create("RoundedEntry.field", "image", images[0], ("focus", images[1]),
+                             ("disabled", images[2]), border=(radius, inset_y, radius, inset_y), sticky="nsew")
+        style.layout("TEntry", [("RoundedEntry.field", {"sticky": "nsew", "children": [
+            ("Entry.padding", {"sticky": "nsew", "children": [("Entry.textarea", {"sticky": "nsew"})]})]})])
+        style.layout("TCombobox", [("RoundedEntry.field", {"sticky": "nsew", "children": [
+            ("Combobox.downarrow", {"side": "right", "sticky": "ns"}),
+            ("Combobox.padding", {"sticky": "nsew", "children": [("Combobox.textarea", {"sticky": "nsew"})]})]})])
         self.root.option_add("*TCombobox*Listbox.background", FIELD)
         self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
         self.root.option_add("*TCombobox*Listbox.selectBackground", LINE)
@@ -224,30 +342,33 @@ class DesktopUI:
                         lightcolor=BG, darkcolor=BG, arrowcolor=DIM, arrowsize=12)
         style.map("Vertical.TScrollbar", background=[("active", "#555860"), ("!active", LINE)],
                   troughcolor=[("!disabled", BG)], arrowcolor=[("!disabled", DIM)])
-        for name, normal, hover, fg in (("TButton", FIELD, "#303238", TEXT),
-                                      ("Primary.TButton", PRIMARY, "#f4f4f6", "#25262b"),
-                                      ("Nav.TButton", PANEL, FIELD, MUTED),
-                                      ("Selected.Nav.TButton", PRIMARY, "#f4f4f6", "#25262b")):
+        for name, normal, hover, fg, surface in (("TButton", FIELD, "#303238", TEXT, PANEL),
+                                      ("Footer.TButton", FIELD, "#303238", TEXT, BG),
+                                      ("Primary.TButton", PRIMARY, "#f4f4f6", "#25262b", BG),
+                                      ("Nav.TButton", PANEL, FIELD, MUTED, PANEL),
+                                      ("Selected.Nav.TButton", PRIMARY, "#f4f4f6", "#25262b", PANEL),
+                                      ("Chrome.TButton", HEADER, FIELD, MUTED, HEADER),
+                                      ("Close.Chrome.TButton", HEADER, "#a83e4a", TEXT, HEADER)):
             element = name + ".surface"
             images = []
+            radius = round((14 if "Nav" in name else 6 if "Chrome" in name else 10) * self.scale)
             pressed = "#c9cbd1" if normal == PRIMARY else LINE
             for color, outline in ((normal, normal), (hover, hover), (pressed, pressed), (FIELD, FIELD), (normal, MINT)):
-                image = Image.new("RGBA", (64, 64))
-                ImageDraw.Draw(image).rounded_rectangle((1, 1, 62, 62), radius=16, fill=color, outline=outline, width=2)
-                photo = ImageTk.PhotoImage(image.resize((32, 32), Image.Resampling.LANCZOS), master=self.root)
+                photo = ImageTk.PhotoImage(surface_tile(radius, color, outline, surface), master=self.root)
                 self.images.append(photo)
                 images.append(photo)
             style.element_create(element, "image", images[0], ("disabled", images[3]),
-                                 ("pressed", images[2]), ("active", images[1]), ("focus", images[4]), border=9, sticky="nsew")
+                                 ("pressed", images[2]), ("active", images[1]), ("focus", images[4]), border=radius, sticky="nsew")
             style.layout(name, [(element, {"sticky": "nsew", "children": [
                 ("Button.padding", {"sticky": "nsew", "children": [("Button.label", {"sticky": "nsew"})]})]})])
-            surface = BG if name == "Primary.TButton" else PANEL
-            style.configure(name, foreground=fg, background=surface, padding=(15, 10), font=("Nunito Sans", 10, "bold"), anchor="center")
+            style.configure(name, foreground=fg, background=surface, padding=(8, 3), font=ui_font(10, True), anchor="center")
             style.map(name, foreground=[("disabled", DIM)], background=[("disabled", surface), ("!disabled", surface)])
         style.configure("Footer.TButton", background=BG)
         style.map("Footer.TButton", background=[("disabled", BG), ("!disabled", BG)])
-        style.configure("Nav.TButton", padding=(2, 13), font=("Nunito Sans", 8))
-        style.configure("Selected.Nav.TButton", padding=(2, 13), font=("Nunito Sans", 8, "bold"))
+        style.configure("Nav.TButton", padding=0, font=ui_font(8))
+        style.configure("Selected.Nav.TButton", padding=0, font=ui_font(8, True))
+        style.configure("Chrome.TButton", padding=(1, 0), font=ui_font(12))
+        style.configure("Close.Chrome.TButton", padding=(1, 0), font=ui_font(14))
 
     def icon(self, name, color=MUTED):
         image = Image.new("RGBA", (48, 48))
@@ -276,7 +397,7 @@ class DesktopUI:
 
     def section(self, parent, title, description=None):
         panel = Panel(parent)
-        label(panel.body, title, size=12, bold=True).pack(anchor="w", pady=(0, 4))
+        label(panel.body, title, size=11, bold=True).pack(anchor="w", pady=(0, 4))
         if description:
             hint = label(panel.body, description, color=MUTED, size=9, wraplength=520, justify="left")
             hint.pack(fill="x", pady=(0, 10))
@@ -302,11 +423,14 @@ class DesktopUI:
             self.secret_buttons[key] = button
         return entry
 
-    def text(self, parent, height, **kwargs):
-        return tk.Text(parent, height=height, width=1, bg=DEEP, fg=TEXT, insertbackground=TEXT,
-                       selectbackground="#43564c", selectforeground=TEXT, highlightthickness=1,
-                       highlightbackground=LINE, highlightcolor=MINT, relief="flat", bd=0,
-                       padx=12, pady=10, font=("Consolas", 10), wrap="word", **kwargs)
+    def text(self, parent, height, expand=False, **kwargs):
+        surface = Panel(parent, padding=12, radius=10, stretch=expand, fill=DEEP, outline=LINE)
+        widget = tk.Text(surface.body, height=height, width=1, bg=DEEP, fg=TEXT, insertbackground=TEXT,
+                         selectbackground="#43564c", selectforeground=TEXT, highlightthickness=0,
+                         relief="flat", bd=0, padx=0, pady=0, font=("Consolas", 10), wrap="word", **kwargs)
+        widget.pack(fill="both", expand=True)
+        widget.surface = surface
+        return widget
 
     def connection_page(self, profile):
         body = self.page_frame("connection")
@@ -318,7 +442,7 @@ class DesktopUI:
         self.field(server.body, "Пароль csqtt", "password", secret=True)
         label(server.body, "Хеши VK или ссылки звонков", color=MUTED, size=9).pack(anchor="w", pady=(14, 5))
         self.app.hashes = self.text(server.body, height=4)
-        self.app.hashes.pack(fill="x")
+        self.app.hashes.surface.pack(fill="x")
         self.app.hashes.insert("1.0", profile.hashes)
         label(server.body, "По одному на строку · до 6 хешей", color=DIM, size=8).pack(anchor="w", pady=(7, 2))
         side = frame(body)
@@ -330,6 +454,10 @@ class DesktopUI:
         self.field(proxy.body, "Пароль прокси", "proxy_password", secret=True)
         self.app.check_proxy_button = ttk.Button(proxy.body, text="Проверить прокси :443", command=self.app.check_proxy)
         self.app.check_proxy_button.pack(anchor="w", pady=(14, 0))
+        self.proxy_feedback = label(proxy.body, "Прокси ещё не проверен", size=9, color=DIM,
+                                    wraplength=360, justify="left")
+        self.proxy_feedback.pack(fill="x", pady=(10, 0))
+        self.proxy_feedback.bind("<Configure>", lambda e: self.proxy_feedback.configure(wraplength=max(120, e.width)))
         local = self.section(side, "Локальные прокси")
         local.pack(fill="x", pady=(14, 0))
         self.endpoints = {}
@@ -396,11 +524,11 @@ class DesktopUI:
         self.app.copy_log_button = ttk.Button(tools, text="Скопировать журнал", command=self.app.copy_log)
         self.app.copy_log_button.pack(side="right")
         ttk.Button(tools, text="Сохранить…", command=self.app.save_log).pack(side="right", padx=10)
-        self.app.log = self.text(body, height=10, state="disabled")
+        self.app.log = self.text(body, height=10, expand=True, state="disabled")
         scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.app.log.yview)
         scrollbar.pack(side="right", fill="y")
         self.app.log.configure(yscrollcommand=scrollbar.set)
-        self.app.log.pack(fill="both", expand=True)
+        self.app.log.surface.pack(fill="both", expand=True)
         self.log_empty = label(self.app.log, "Журнал пока пуст\n\nЗдесь появятся события после подключения.",
                                color=DIM, size=11, anchor="center", justify="center")
         self.log_empty.place(relx=0.5, rely=0.45, anchor="center")
@@ -441,6 +569,20 @@ class DesktopUI:
         self.status_label.configure(fg=color if state in ("online", "unconfirmed", "recovering") else MUTED)
         self.update_endpoints()
 
+    def show_proxy_result(self, state, message):
+        color = {"checking": AMBER, "success": MINT, "error": RED}[state]
+        self.proxy_feedback.configure(text=message, fg=color)
+        self.root.after_idle(self.reveal_proxy_result)
+
+    def reveal_proxy_result(self):
+        if self.page != "connection" or not self.proxy_feedback.winfo_ismapped():
+            return
+        page = self.connection
+        bottom = self.proxy_feedback.winfo_rooty() - page.body.winfo_rooty() + self.proxy_feedback.winfo_height() + 10
+        visible_bottom = page.canvas.canvasy(0) + page.canvas.winfo_height()
+        if bottom > visible_bottom:
+            page.canvas.yview_moveto(max(0, bottom - page.canvas.winfo_height()) / max(1, page.body.winfo_height()))
+
     def update_endpoints(self):
         for key, variable in self.endpoints.items():
             profile = self.app.running_profile if self.app.helper else None
@@ -453,13 +595,3 @@ class DesktopUI:
         port = getattr(profile, key) if profile else self.app.vars[key].get()
         self.root.clipboard_clear()
         self.root.clipboard_append(f"{'socks5h' if kind == 'SOCKS5' else 'http'}://127.0.0.1:{port}")
-
-    def dark_titlebar(self):
-        try:
-            window = ctypes.windll.user32.GetParent(self.root.winfo_id())
-            enabled = ctypes.c_int(1)
-            for attribute in (20, 19):
-                if ctypes.windll.dwmapi.DwmSetWindowAttribute(window, attribute, ctypes.byref(enabled), 4) == 0:
-                    break
-        except (AttributeError, OSError):
-            pass
