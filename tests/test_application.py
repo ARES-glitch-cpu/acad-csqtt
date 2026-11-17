@@ -4,13 +4,16 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import unittest
 from unittest.mock import patch
 
-import app
+from csqtt_client import application as app
+from csqtt_client.models.profile import normalize_hashes
+from csqtt_client.platform.windows import profiles
 
 
 class ClientTests(unittest.TestCase):
@@ -30,7 +33,7 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("NO_PROXY", env)
 
     def test_hash_normalization_and_validation(self):
-        self.assertEqual(app.normalize_hashes("https://vk.com/call/join/abc123?x=1\nabc123;def456"), ["abc123", "def456"])
+        self.assertEqual(normalize_hashes("https://vk.com/call/join/abc123?x=1\nabc123;def456"), ["abc123", "def456"])
         for profile in [replace(self.profile(), hashes=""), replace(self.profile(), socks_port="8080"),
                         replace(self.profile(), workers="0"), replace(self.profile(), proxy="proxy.invalid:3128"),
                         replace(self.profile(), turn="turn:example.com:443"), replace(self.profile(), password="")]:
@@ -40,9 +43,26 @@ class ClientTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows DPAPI")
     def test_profile_encryption_roundtrip(self):
         plain = json.dumps({"secret": "test-only-secret"}).encode()
-        encrypted = app.dpapi(plain)
+        encrypted = profiles.dpapi(plain)
         self.assertNotIn(b"test-only-secret", encrypted)
-        self.assertEqual(app.dpapi(encrypted, decrypt=True), plain)
+        self.assertEqual(profiles.dpapi(encrypted, decrypt=True), plain)
+
+    @unittest.skipUnless(os.name == "nt", "Windows DPAPI")
+    def test_legacy_profile_load_save_and_forget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            legacy = app.Path(directory) / "old/profile.dat"
+            current = app.Path(directory) / "new/profile.dat"
+            with patch.object(profiles, "PROFILE", legacy), patch.object(profiles, "LEGACY_PROFILE", current):
+                profiles.save_profile(self.profile())
+            with patch.object(profiles, "PROFILE", current), patch.object(profiles, "LEGACY_PROFILE", legacy):
+                self.assertEqual(profiles.load_profile(), self.profile())
+                self.assertTrue(profiles.profile_exists())
+                profiles.save_profile(profiles.load_profile())
+                self.assertTrue(current.exists())
+                self.assertFalse(legacy.exists())
+                self.assertEqual(profiles.load_profile(), self.profile())
+                profiles.delete_profile()
+                self.assertFalse(profiles.profile_exists())
 
     def fake_proxy(self, status):
         listener = socket.socket()
@@ -173,6 +193,49 @@ class LogExportTests(unittest.TestCase):
             self.assertEqual(self.ui.ui.proxy_feedback.cget("fg"), "#df9499")
             self.assertFalse(self.ui.check_proxy_button.instate(["disabled"]))
 
+    def test_dragging_and_switching_pages_keep_window_responsive(self):
+        self.root.deiconify()
+        self.root.update()
+        desktop = self.ui.ui
+        pages = [getattr(desktop, name) for name in ("connection", "settings", "logs")]
+        unmapped = []
+        for page in pages:
+            page.bind("<Unmap>", lambda event: unmapped.append(event.widget))
+        self.ui.vars["server"].set("203.0.113.2:443")
+        self.ui.hashes.insert("1.0", "test-hash-for-page-switch")
+        for _ in range(10):
+            for name in ("settings", "logs", "connection"):
+                desktop.show_page(name)
+                self.root.update()
+                self.assertTrue(all(page.winfo_ismapped() for page in pages))
+        self.assertFalse(unmapped, "Page switches must not unmap and rebuild the UI")
+        self.assertEqual(self.ui.profile().hashes, "test-hash-for-page-switch")
+        focused = str(self.ui.ui.entries["server"])
+        for _ in range(30):
+            focused = str(self.root.tk.call("tk_focusNext", focused))
+            self.assertFalse(focused.startswith(str(desktop.settings)))
+            self.assertFalse(focused.startswith(str(desktop.logs)))
+        bar = desktop.titlebar
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        bar.event_generate("<ButtonPress-1>", x=250, y=20, rootx=x+250, rooty=y+20)
+        heartbeats = []
+        for delta in range(5, 101, 5):
+            self.root.after_idle(lambda: heartbeats.append(1))
+            bar.event_generate("<B1-Motion>", x=250, y=20, rootx=x+250+delta, rooty=y+20+delta)
+            self.root.update()
+        bar.event_generate("<ButtonRelease-1>", x=250, y=20)
+        self.root.update()
+        self.assertEqual(len(heartbeats), 20)
+        self.assertEqual((self.root.winfo_x(), self.root.winfo_y()), (x+100, y+100))
+        desktop.maximize_button.invoke()
+        self.root.update()
+        self.assertEqual(self.root.state(), "zoomed")
+        bar.event_generate("<ButtonPress-1>", x=250, y=20, rootx=250, rooty=20)
+        bar.event_generate("<B1-Motion>", x=250, y=20, rootx=300, rooty=80)
+        bar.event_generate("<ButtonRelease-1>", x=250, y=20)
+        self.root.update()
+        self.assertEqual(self.root.state(), "normal")
+
 
 @unittest.skipUnless(os.name == "nt", "Windows tray")
 class TrayTests(unittest.TestCase):
@@ -198,11 +261,11 @@ class TrayTests(unittest.TestCase):
             tray = ui.tray
             pump_until(tray.ready.is_set)
             self.assertTrue(tray.icon.visible)
-            core = subprocess.Popen([app.sys.executable, "-c", "import sys; sys.stdin.readline()"],
+            core = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.readline()"],
                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
                                     creationflags=app.NO_WINDOW)
             processes.append(core)
-            helper = subprocess.Popen([app.sys.executable, "-c", "import time; time.sleep(60)"],
+            helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
                                       stdout=subprocess.PIPE, text=True, creationflags=app.NO_WINDOW)
             processes.append(helper)
             ui.core, ui.helper = core, helper
@@ -213,7 +276,7 @@ class TrayTests(unittest.TestCase):
             opened.start()
             opened.join()
             pump_until(lambda: root.state() == "normal")
-            self.assertTrue(ui.ui.chrome.previous)
+            self.assertTrue(ui.ui.chrome.hwnd)
             ui.ui.maximize_button.invoke()
             pump_until(lambda: root.state() == "zoomed")
             ui.ui.maximize_button.invoke()

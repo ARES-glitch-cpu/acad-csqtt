@@ -68,7 +68,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          $archive = "CSQTT-Kolenka-$tag-Win10-x64.zip"
+          $archive = "CSQTT-$tag-Win10-x64.zip"
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $archive "$archive.sha256" --clobber --repo $env:GITHUB_REPOSITORY

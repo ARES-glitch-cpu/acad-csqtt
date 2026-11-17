@@ -10,6 +10,8 @@ class WindowChrome:
         self.hwnd = None
         self.previous = None
         self.region_size = None
+        self.drag_origin = None
+        self.normal_size = None
         if sys.platform != "win32":
             return
         self.user = ctypes.WinDLL("user32", use_last_error=True)
@@ -31,8 +33,6 @@ class WindowChrome:
         self.user.IsWindow.argtypes = [wintypes.HWND]
         self.user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                           ctypes.c_int, ctypes.c_int, wintypes.UINT]
-        self.user.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-        self.user.SendMessageW.restype = ctypes.c_ssize_t
         self.user.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
         self.user.MonitorFromWindow.restype = wintypes.HMONITOR
         self.gdi.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
@@ -113,11 +113,35 @@ class WindowChrome:
                 self.gdi.DeleteObject(region)
 
     def drag(self, event):
-        if self.hwnd:
-            self.user.ReleaseCapture()
-            self.user.SendMessageW(self.hwnd, 0x00A1, 2, 0)  # WM_NCLBUTTONDOWN, HTCAPTION
+        # A native modal move loop inside a Tcl callback can re-enter Tcl and abort
+        # the process. Keep movement in Tk's ordinary event loop instead.
+        self.drag_origin = (event.x_root, event.y_root, self.root.winfo_x(), self.root.winfo_y())
+
+    def drag_motion(self, event):
+        if self.drag_origin is None:
+            return
+        start_x, start_y, window_x, window_y = self.drag_origin
+        dx, dy = event.x_root - start_x, event.y_root - start_y
+        if abs(dx) + abs(dy) < 3:
+            return
+        if self.root.state() == "zoomed":
+            fraction = (start_x - window_x) / max(1, self.root.winfo_width())
+            width, height = self.normal_size or (round(1120*self.scale), round(900*self.scale))
+            self.root.state("normal")
+            window_x = event.x_root - round(width * fraction)
+            window_y = event.y_root - round(20*self.scale)
+            self.root.geometry(f"{width}x{height}+{window_x}+{window_y}")
+            self.drag_origin = (event.x_root, event.y_root, window_x, window_y)
+        else:
+            self.root.geometry(f"+{window_x + dx}+{window_y + dy}")
+
+    def drag_end(self, event=None):
+        self.drag_origin = None
 
     def maximize(self, event=None):
+        self.drag_end()
+        if self.root.state() != "zoomed":
+            self.normal_size = (self.root.winfo_width(), self.root.winfo_height())
         self.root.state("normal" if self.root.state() == "zoomed" else "zoomed")
 
     def stop(self):

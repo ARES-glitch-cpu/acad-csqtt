@@ -1,179 +1,24 @@
-"""Small native Windows launcher for CSQTT + local SOCKS5/HTTP proxies."""
-from __future__ import annotations
-
-import base64
-import ctypes
-from ctypes import wintypes
-from dataclasses import asdict, dataclass
+"""Desktop controller: UI events and the connection process lifecycle."""
+from dataclasses import asdict
 import http.client
 import ipaddress
 import json
-import os
 from pathlib import Path
 import queue
 import re
 import socket
 import ssl
 import subprocess
-import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 
-ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-APP_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-PROFILE = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "CSQTT-Kolenka" / "profile.dat"
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-
-@dataclass
-class Profile:
-    server: str = ""
-    password: str = ""
-    hashes: str = ""
-    proxy: str = "10.0.0.1:3128"
-    proxy_user: str = ""
-    proxy_password: str = ""
-    socks_port: str = "1080"
-    http_port: str = "8080"
-    workers: str = "6"
-    turn: str = ""
-    obfs: str = "unified"
-    srtp: str = "auto"
-    generation: str = "0"
-    salt: str = ""
-
-    def validate(self):
-        host, port = split_address(self.server)
-        if not host or not 1 <= port <= 65535:
-            raise ValueError("Сервер csqtt: укажите IP или домен и порт, например 203.0.113.10:443.")
-        phost, pport = split_address(self.proxy)
-        ipaddress.ip_address(phost)
-        if not 1 <= pport <= 65535:
-            raise ValueError("Проверьте порт корпоративного прокси.")
-        if not self.password:
-            raise ValueError("Введите пароль пользователя сервера csqtt.")
-        hashes = normalize_hashes(self.hashes)
-        if not 1 <= len(hashes) <= 6:
-            raise ValueError("Нужно от 1 до 6 хешей VK или ссылок /call/join/.")
-        if self.proxy_user and not self.proxy_password:
-            raise ValueError("Введите пароль корпоративного прокси.")
-        if ":" in self.proxy_user or any(c in self.proxy_user + self.proxy_password for c in "\r\n"):
-            raise ValueError("Логин/пароль прокси содержат недопустимые символы.")
-        if self.turn and (":" in self.turn or "/" in self.turn or any(c.isspace() for c in self.turn)):
-            raise ValueError("TURN: только IPv4 или имя хоста без схемы и порта. Порт фиксирован: 443.")
-        ports = [int(self.socks_port), int(self.http_port)]
-        if any(not 1024 <= p <= 65535 for p in ports) or ports[0] == ports[1]:
-            raise ValueError("Локальные порты: разные числа от 1024 до 65535.")
-        if not 1 <= int(self.workers) <= 100:
-            raise ValueError("Число потоков: от 1 до 100.")
-        if not 0 <= int(self.generation) < 2**64:
-            raise ValueError("Поколение: целое неотрицательное число.")
-        if self.obfs not in ("unified", "audio", "video") or self.srtp not in ("auto", "wrap", "dtls"):
-            raise ValueError("Неверный режим протокола.")
-        return hashes
-
-
-def split_address(value):
-    host, port = value.strip().rsplit(":", 1)
-    if any(c.isspace() for c in host) or any(c in host for c in "/@?#"):
-        raise ValueError("Адрес должен иметь вид IP:порт или домен:порт.")
-    return host.strip("[]"), int(port)
-
-
-def normalize_hashes(value):
-    result = []
-    for token in re.split(r"[\s,;]+", value.strip()):
-        token = token.strip("<>\"'")
-        if "/call/join/" in token:
-            token = token.split("/call/join/", 1)[1]
-        elif token.startswith(("http://", "https://")):
-            raise ValueError("Ссылка VK должна содержать /call/join/.")
-        token = re.split(r"[?#/]", token, maxsplit=1)[0]
-        if token and token not in result:
-            result.append(token)
-    return result
-
-
-class Blob(ctypes.Structure):
-    _fields_ = [("size", wintypes.DWORD), ("data", ctypes.POINTER(ctypes.c_ubyte))]
-
-
-def dpapi(value: bytes, decrypt=False):
-    """Encrypt for the current Windows account; never write plaintext profiles."""
-    buffer = ctypes.create_string_buffer(value)
-    source = Blob(len(value), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte)))
-    target = Blob()
-    crypt = ctypes.WinDLL("crypt32", use_last_error=True)
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.LocalFree.argtypes = [ctypes.c_void_p]
-    kernel.LocalFree.restype = ctypes.c_void_p
-    if decrypt:
-        ok = crypt.CryptUnprotectData(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(target))
-    else:
-        ok = crypt.CryptProtectData(ctypes.byref(source), "CSQTT profile", None, None, None, 1, ctypes.byref(target))
-    if not ok:
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        return ctypes.string_at(target.data, target.size)
-    finally:
-        kernel.LocalFree(target.data)
-
-
-def save_profile(profile):
-    PROFILE.parent.mkdir(parents=True, exist_ok=True)
-    temp = PROFILE.with_suffix(".tmp")
-    temp.write_bytes(dpapi(json.dumps(asdict(profile), ensure_ascii=False).encode("utf-8")))
-    temp.replace(PROFILE)
-
-
-def load_profile():
-    if not PROFILE.exists():
-        return Profile()
-    data = json.loads(dpapi(PROFILE.read_bytes(), decrypt=True))
-    return Profile(**{k: v for k, v in data.items() if k in Profile.__dataclass_fields__})
-
-
-def proxy_connect(profile, target):
-    host, port = split_address(profile.proxy)
-    ipaddress.ip_address(host)
-    auth = ""
-    if profile.proxy_user:
-        token = base64.b64encode(f"{profile.proxy_user}:{profile.proxy_password}".encode()).decode()
-        auth = f"Proxy-Authorization: Basic {token}\r\n"
-    with socket.create_connection((host, port), timeout=12) as conn:
-        conn.sendall(f"CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n{auth}\r\n".encode())
-        header = bytearray()
-        while not header.endswith(b"\r\n\r\n"):
-            value = conn.recv(1)
-            if not value or len(header) >= 16384:
-                raise ValueError("Прокси закрыл соединение или прислал неверный ответ.")
-            header.extend(value)
-        status = header.split(b"\r\n", 1)[0].split()
-        if len(status) < 2 or status[1] != b"200":
-            code = status[1].decode("ascii", "replace") if len(status) > 1 else "?"
-            raise ValueError({"407": "Прокси: ошибка авторизации 407. Нужен HTTP Basic; NTLM/Kerberos пока не поддерживаются.",
-                              "403": "Прокси запретил CONNECT 403: проверьте разрешённый TURN-хост и порт 443."}.get(code, f"Прокси вернул HTTP {code}."))
-
-
-def core_command(profile, packet_port):
-    hashes = profile.validate()
-    args = [str(ROOT / "bin" / "csqtt-core.exe"), "--peer", profile.server.strip(),
-            "--listen", f"127.0.0.1:{packet_port}", "--vk", ",".join(hashes),
-            "--workers", profile.workers, "--exact-workers", "--turn-transport", "tcp", "--port", "443",
-            "--obfs", profile.obfs, "--srtp-mode", profile.srtp, "--gen", profile.generation, "--salt", profile.salt]
-    if profile.turn.strip():
-        args += ["--turn", profile.turn.strip()]
-    env = os.environ.copy()
-    # Ignore inherited bypasses and proxy credentials. The core uses this explicit proxy.
-    for key in list(env):
-        if key.upper() in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
-            del env[key]
-    env.update(CSQTT_PASSWORD=profile.password, CSQTT_HTTP_PROXY=profile.proxy.strip(),
-               CSQTT_PROXY_USER=profile.proxy_user, CSQTT_PROXY_PASSWORD=profile.proxy_password,
-               CSQTT_EVENTS="1")
-    return args, env
+from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW
+from csqtt_client.models.profile import Profile
+from csqtt_client.platform.windows.profiles import load_profile, save_profile, delete_profile, profile_exists
+from csqtt_client.services.proxy import proxy_connect
+from csqtt_client.services.tunnel import core_command
 
 
 class App:
@@ -194,9 +39,9 @@ class App:
         except Exception:
             profile = Profile()
         self.vars = {k: tk.StringVar(value=str(v)) for k, v in asdict(profile).items()}
-        self.remember = tk.BooleanVar(value=PROFILE.exists())
+        self.remember = tk.BooleanVar(value=profile_exists())
         self.status = tk.StringVar(value="Укажите сервер и прокси, затем нажмите «Подключить».")
-        from ui import DesktopUI
+        from csqtt_client.ui.desktop import DesktopUI
         self.ui = DesktopUI(self, root, profile, APP_VERSION, ROOT)
         self.log.bind("<Control-a>", self.select_log)
         self.log.bind("<Control-A>", self.select_log)
@@ -214,7 +59,7 @@ class App:
         root.after(100, self.poll)
 
     def start_tray(self):
-        from tray import TrayIcon
+        from csqtt_client.platform.windows.tray import TrayIcon
         self.tray = TrayIcon(self.events, f"CSQTT v{APP_VERSION}")
 
     def hide_to_tray(self):
@@ -337,8 +182,8 @@ class App:
             args, env = core_command(profile, self.packet_port)
             if self.remember.get():
                 save_profile(profile)
-            elif PROFILE.exists():
-                PROFILE.unlink()
+            else:
+                delete_profile()
             self.session += 1
             self.ready = False
             self.config = None
@@ -536,22 +381,3 @@ class App:
                 self.show_window()
                 self.append(f"Не удалось создать значок в трее: {value}")
         self.root.after(100, self.poll)
-
-
-def main():
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except (AttributeError, OSError):
-        pass
-    root = tk.Tk()
-    ttk.Style().theme_use("vista" if sys.platform == "win32" else "clam")
-    ui = App(root)
-    if sys.platform == "win32":
-        ui.start_tray()
-    if "--smoke" in sys.argv:
-        root.after(700, ui.close)
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    main()

@@ -2,7 +2,9 @@
 import threading
 
 import pystray
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
+
+from csqtt_client.config import ASSETS
 
 
 class TrayIcon:
@@ -10,10 +12,8 @@ class TrayIcon:
         self.events = events
         self.ready = threading.Event()
         self.closed = threading.Event()
-        image = Image.new("RGBA", (64, 64))
-        drawing = ImageDraw.Draw(image)
-        drawing.rounded_rectangle((3, 3, 61, 61), radius=13, fill="#25272c")
-        drawing.text((32, 32), "CS", font=ImageFont.load_default(size=28), anchor="mm", fill="white")
+        with Image.open(ASSETS / "icons/CS_logo.png") as source:
+            image = source.convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
         self.icon = pystray.Icon("csqtt", image, title, menu=pystray.Menu(
             pystray.MenuItem("Открыть", lambda: events.put(("tray_open", None)), default=True),
             pystray.Menu.SEPARATOR,

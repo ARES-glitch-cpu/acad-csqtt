@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 
-root = Path(__file__).parent
+root = Path(__file__).resolve().parents[1]
 destination = Path(sys.argv[1]) / "licenses"
 destination.mkdir(parents=True, exist_ok=True)
 
