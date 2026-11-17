@@ -135,6 +135,28 @@ class LogExportTests(unittest.TestCase):
                 self.ui.save_log()
             self.assertEqual(filename.read_text(encoding="utf-8"), self.expected)
 
+    def test_pages_keep_profile_and_show_live_statistics(self):
+        self.ui.vars["server"].set("203.0.113.2:46000")
+        self.ui.vars["password"].set("test-only-password")
+        self.ui.hashes.insert("1.0", "test-only-hash")
+        self.ui.ui.secret_buttons["password"].invoke()
+        self.assertEqual(self.ui.ui.entries["password"].cget("show"), "")
+        self.ui.ui.secret_buttons["password"].invoke()
+        self.assertNotEqual(self.ui.ui.entries["password"].cget("show"), "")
+        self.ui.ui.show_page("settings")
+        self.ui.vars["http_port"].set("8181")
+        self.ui.ui.show_page("logs")
+        self.ui.process_line("core", '__CSQTT_EVENT__|STATS|{"active":12,"bytes_up":1048576,"bytes_down":2097152}')
+        self.assertEqual(self.ui.active_count.get(), "12")
+        self.assertEqual(self.ui.upload_total.get(), "1.00")
+        self.assertEqual(self.ui.download_total.get(), "2.00")
+        self.ui.ui.show_page("connection")
+        self.assertEqual(self.ui.profile().server, "203.0.113.2:46000")
+        self.assertEqual(self.ui.profile().password, "test-only-password")
+        self.assertEqual(self.ui.profile().hashes, "test-only-hash")
+        self.ui.ui.copy_endpoint("http_port", "HTTP")
+        self.assertEqual(self.root.clipboard_get(), "http://127.0.0.1:8181")
+
 
 @unittest.skipUnless(os.name == "nt", "Windows tray")
 class TrayTests(unittest.TestCase):

@@ -35,6 +35,7 @@ if ($LASTEXITCODE -ne 0) { throw 'GUI build failed' }
 Copy-Item -LiteralPath bin -Destination $packageDir -Recurse -Force
 Copy-Item -LiteralPath "$packageDir\_internal\VCRUNTIME140.dll" -Destination "$packageDir\bin\VCRUNTIME140.dll" -Force
 Copy-Item -LiteralPath README.md,LICENSE,NOTICE.md,VERSION -Destination $packageDir -Force
+Copy-Item -LiteralPath assets -Destination $packageDir -Recurse -Force
 & python collect_licenses.py $packageDir
 if ($LASTEXITCODE -ne 0) { throw 'License collection failed' }
 $smoke = Start-Process -FilePath (Join-Path $packageDir 'CSQTT-Kolenka.exe') -ArgumentList '--smoke' -WindowStyle Hidden -PassThru

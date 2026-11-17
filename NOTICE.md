@@ -18,6 +18,9 @@ The packet proxy uses the WireGuard Go netstack package (MIT) and gVisor
 The GUI is packaged with Python, Tcl/Tk and PyInstaller.
 Third-party copyright and license texts are provided in licenses/.
 
+The UI includes Nunito Sans, Copyright 2016 The Nunito Sans Project Authors,
+under the SIL Open Font License 1.1, provided in assets/fonts/OFL.txt.
+
 No proxy passwords, CSQTT server credentials or personal profiles are included
 in the portable archive. Saved profiles reside outside this distribution in
 the current Windows user's LocalAppData directory.

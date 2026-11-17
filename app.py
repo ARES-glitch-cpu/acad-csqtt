@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, font as tk_font, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
 APP_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -179,15 +179,6 @@ def core_command(profile, packet_port):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title(f"CSQTT v{APP_VERSION} — коленка / TCP")
-        width = min(1000, root.winfo_screenwidth() - 80)
-        height = min(1000, root.winfo_screenheight() - 100)
-        root.geometry(f"{width}x{height}")
-        root.minsize(min(860, width), min(820, height))
-        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
-            tk_font.nametofont(name, root=root).configure(family="Segoe UI", size=11)
-        ttk.Style(root).configure(".", font=("Segoe UI", 11))
-        root.option_add("*TCombobox*Listbox.font", ("Segoe UI", 11))
         self.events = queue.Queue()
         self.core = self.helper = None
         self.session = 0
@@ -204,75 +195,15 @@ class App:
             profile = Profile()
         self.vars = {k: tk.StringVar(value=str(v)) for k, v in asdict(profile).items()}
         self.remember = tk.BooleanVar(value=PROFILE.exists())
-        self.status = tk.StringVar(value="Отключено")
-        self.stats = tk.StringVar(value="SOCKS5 127.0.0.1:1080 · HTTP 127.0.0.1:8080")
-        self.canvas = tk.Canvas(root, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(root, orient="vertical", command=self.canvas.yview)
-        scrollbar.pack(side="right", fill="y")
-        self.canvas.configure(yscrollcommand=scrollbar.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        outer = ttk.Frame(self.canvas, padding=18)
-        content = self.canvas.create_window(0, 0, window=outer, anchor="nw")
-        outer.bind("<Configure>", lambda event: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(
-            content, width=event.width, height=max(event.height, outer.winfo_reqheight())))
-        root.bind("<MouseWheel>", self.scroll_window)
-        ttk.Label(outer, text="CSQTT / TCP через корпоративный прокси", font=("Segoe UI", 16, "bold")).pack(anchor="w")
-        ttk.Label(outer, text="Без TUN и прав администратора. Все внешние соединения — через HTTP CONNECT.").pack(anchor="w", pady=(5, 12))
-        server = ttk.LabelFrame(outer, text="Сервер csqtt", padding=10)
-        server.pack(fill="x")
-        self.field(server, "Сервер IP:порт", "server", 0)
-        self.field(server, "Пароль csqtt", "password", 1, secret=True)
-        ttk.Label(server, text="Хеши VK / ссылки звонков\nпо одному на строку (до 6)").grid(row=2, column=0, sticky="nw", pady=5)
-        self.hashes = tk.Text(server, height=3, width=44, font=("Consolas", 11), wrap="word")
-        self.hashes.grid(row=2, column=1, sticky="ew", pady=5)
-        self.hashes.insert("1.0", profile.hashes)
-        proxy = ttk.LabelFrame(outer, text="Корпоративный HTTP-прокси · авторизация Basic", padding=10)
-        proxy.pack(fill="x", pady=10)
-        self.field(proxy, "Адрес IP:порт", "proxy", 0)
-        self.field(proxy, "Логин", "proxy_user", 1)
-        self.field(proxy, "Пароль прокси", "proxy_password", 2, secret=True)
-        self.check_proxy_button = ttk.Button(proxy, text="Проверить CONNECT :443", command=self.check_proxy)
-        self.check_proxy_button.grid(row=3, column=1, sticky="w", pady=4)
-        advanced = ttk.LabelFrame(outer, text="Параметры (обычно можно оставить как есть)", padding=10)
-        advanced.pack(fill="x")
-        self.field(advanced, "TURN-хост (необязательно)", "turn", 0)
-        self.field(advanced, "Потоки / workers", "workers", 1)
-        row = ttk.Frame(advanced)
-        row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=4)
-        for label, name, values in [("Обфускация", "obfs", ("unified", "audio", "video")), ("SRTP", "srtp", ("auto", "wrap", "dtls"))]:
-            ttk.Label(row, text=label).pack(side="left", padx=(0, 7))
-            ttk.Combobox(row, textvariable=self.vars[name], values=values, state="readonly", width=12).pack(side="left", padx=(0, 20))
-        ports = ttk.Frame(advanced)
-        ports.grid(row=3, column=0, columnspan=2, sticky="ew", pady=4)
-        for label, name in [("SOCKS5 порт", "socks_port"), ("HTTP порт", "http_port"), ("Поколение", "generation")]:
-            ttk.Label(ports, text=label).pack(side="left", padx=(0, 5))
-            ttk.Entry(ports, textvariable=self.vars[name], width=7).pack(side="left", padx=(0, 15))
-        self.field(advanced, "Salt (если выдан сервером)", "salt", 4, secret=True)
-        ttk.Checkbutton(outer, text="Запомнить профиль (шифрование Windows DPAPI для текущего пользователя)", variable=self.remember).pack(anchor="w", pady=8)
-        actions = ttk.Frame(outer)
-        actions.pack(fill="x")
-        self.start_button = ttk.Button(actions, text="Подключить", command=self.start)
-        self.start_button.pack(side="left")
-        self.stop_button = ttk.Button(actions, text="Отключить", command=self.stop, state="disabled")
-        self.stop_button.pack(side="left", padx=8)
-        self.test_button = ttk.Button(actions, text="Проверить интернет / IP", command=self.check_internet, state="disabled")
-        self.test_button.pack(side="left")
-        ttk.Label(outer, textvariable=self.status, font=("Segoe UI", 12, "bold"), wraplength=800).pack(anchor="w", pady=(12, 3))
-        ttk.Label(outer, textvariable=self.stats).pack(anchor="w", pady=(0, 8))
-        self.log = tk.Text(outer, height=7, state="disabled", font=("Consolas", 11), wrap="word")
-        self.log.pack(fill="both", expand=True)
-        log_actions = ttk.Frame(outer)
-        log_actions.pack(fill="x", pady=(6, 0))
-        self.copy_log_button = ttk.Button(log_actions, text="Скопировать журнал", command=self.copy_log)
-        self.copy_log_button.pack(side="left")
-        ttk.Button(log_actions, text="Сохранить журнал…", command=self.save_log).pack(side="left", padx=8)
-        ttk.Label(log_actions, text="В журнале: Ctrl+A → Ctrl+C").pack(side="right")
+        self.status = tk.StringVar(value="Укажите сервер и прокси, затем нажмите «Подключить».")
+        from ui import DesktopUI
+        self.ui = DesktopUI(self, root, profile, APP_VERSION, ROOT)
         self.log.bind("<Control-a>", self.select_log)
         self.log.bind("<Control-A>", self.select_log)
         self.log.bind("<Control-c>", lambda event: self.copy_log(selected=True))
         self.log.bind("<Control-C>", lambda event: self.copy_log(selected=True))
-        self.log_menu = tk.Menu(root, tearoff=False)
+        self.log_menu = tk.Menu(root, tearoff=False, bg="#25272c", fg="#eeeef0",
+                                activebackground="#37393f", activeforeground="#ffffff")
         self.log_menu.add_command(label="Копировать выделение", command=lambda: self.copy_log(selected=True))
         self.log_menu.add_command(label="Скопировать весь журнал", command=self.copy_log)
         self.log_menu.add_command(label="Выделить всё", command=self.select_log)
@@ -281,10 +212,6 @@ class App:
         root.bind("<Unmap>", self.on_minimize)
         root.bind("<Destroy>", self.on_destroy, add="+")
         root.after(100, self.poll)
-
-    def scroll_window(self, event):
-        if not isinstance(event.widget, tk.Text):
-            self.canvas.yview_scroll(-int(event.delta / 120), "units")
 
     def start_tray(self):
         from tray import TrayIcon
@@ -311,9 +238,12 @@ class App:
             self.root.focus_force()
 
     def on_destroy(self, event):
-        if event.widget is self.root and self.tray:
-            self.tray.stop()
-            self.tray = None
+        if event.widget is self.root:
+            for callback in self.root.tk.call("after", "info"):
+                self.root.after_cancel(callback)
+            if self.tray:
+                self.tray.stop()
+                self.tray = None
 
     def select_log(self, event=None):
         self.log.focus_set()
@@ -350,11 +280,6 @@ class App:
             self.log_menu.grab_release()
         return "break"
 
-    def field(self, frame, label, key, row, secret=False):
-        frame.columnconfigure(1, weight=1)
-        ttk.Label(frame, text=label, width=29).grid(row=row, column=0, sticky="w", pady=4)
-        ttk.Entry(frame, textvariable=self.vars[key], show="•" if secret else "").grid(row=row, column=1, sticky="ew", pady=4)
-
     def profile(self):
         return Profile(**{**{k: v.get() for k, v in self.vars.items()}, "hashes": self.hashes.get("1.0", "end").strip()})
 
@@ -365,7 +290,12 @@ class App:
                 message = message.replace(value, "[скрыто]")
         message = re.sub(r"(?i)(access_token|client_secret|password|secret)=([^\s&]+)", r"\1=[скрыто]", message)
         self.log.configure(state="normal")
-        self.log.insert("end", time.strftime("%H:%M:%S ") + message.rstrip() + "\n")
+        self.ui.log_empty.place_forget()
+        lower = message.lower()
+        tag = "error" if any(s in lower for s in ("ошиб", "fatal", "denied", "failed")) else (
+            "retry" if any(s in lower for s in ("retry", "timeout", "повтор")) else (
+                "ready" if any(s in lower for s in ("[ready]", "успеш", "интернет через csqtt работает")) else ""))
+        self.log.insert("end", time.strftime("%H:%M:%S ") + message.rstrip() + "\n", tag)
         if int(self.log.index("end-1c").split(".")[0]) > 450:
             self.log.delete("1.0", "100.0")
         self.log.see("end")
@@ -415,10 +345,15 @@ class App:
                                          stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
             self.read_process(self.core, "core", self.session)
             self.status.set("Подключение: получаю TURN-сессию и конфигурацию сервера…")
+            self.ui.set_state("connecting")
+            self.active_count.set("0")
+            self.upload_total.set("0.00")
+            self.download_total.set("0.00")
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
             self.append(f"Запущено ядро: TCP через HTTP CONNECT, TURN :443. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
         except Exception as error:
+            self.ui.show_page("connection")
             messagebox.showerror("Не удалось начать подключение", str(error))
 
     def read_process(self, process, kind, session):
@@ -446,6 +381,7 @@ class App:
     def process_line(self, kind, line):
         if kind == "helper" and line.startswith("PROXY_READY"):
             self.status.set("Туннель готов, локальные прокси запущены. Проверяю интернет…")
+            self.ui.set_state("checking")
             self.test_button.configure(state="normal")
             self.check_internet()
         if line.startswith("__CSQTT_EVENT__|"):
@@ -466,9 +402,12 @@ class App:
                 elif name == "READY":
                     self.ready = True
                 elif name == "STATS":
-                    self.stats.set(f"Активных потоков: {payload.get('active', 0)} · ↑ {payload.get('bytes_up', 0)/1048576:.2f} МБ · ↓ {payload.get('bytes_down', 0)/1048576:.2f} МБ")
+                    self.active_count.set(str(payload.get("active", 0)))
+                    self.upload_total.set(f"{payload.get('bytes_up', 0)/1048576:.2f}")
+                    self.download_total.set(f"{payload.get('bytes_down', 0)/1048576:.2f}")
                 elif name in ("ACTIVE_ZERO", "SERVER_RESTART", "NETWORK_SUSPECT"):
                     self.status.set("Связь с сервером потеряна; ядро пытается восстановить туннель…")
+                    self.ui.set_state("recovering")
                 elif name == "ERROR":
                     self.append(str(payload.get("message", payload)))
                 self.start_helper()
@@ -484,6 +423,7 @@ class App:
         self.test_button.configure(state="disabled")
         def work():
             conn = None
+            succeeded = False
             try:
                 # Explicit CONNECT to the LOCAL proxy, unaffected by proxy environment variables.
                 conn = http.client.HTTPSConnection("127.0.0.1", int(profile.http_port), timeout=25, context=ssl.create_default_context())
@@ -494,12 +434,13 @@ class App:
                     raise ValueError(f"Проверка IP вернула HTTP {response.status}")
                 address = str(ipaddress.ip_address(response.read(128).decode().strip()))
                 result = f"Интернет через csqtt работает. Внешний IP: {address}"
+                succeeded = True
             except Exception:
                 result = "Локальные прокси запущены, но интернет не подтверждён. Проверьте журнал и параметры сервера."
             finally:
                 if conn:
                     conn.close()
-                self.events.put(("internet", (session, result)))
+                self.events.put(("internet", (session, result, succeeded)))
         self.background(work)
 
     def stop(self):
@@ -532,6 +473,7 @@ class App:
         self.stop_button.configure(state="disabled")
         self.test_button.configure(state="disabled")
         self.status.set("Отключение…")
+        self.ui.set_state("stopping")
         # Keep cleanup alive if the window closes while STOP is pending.
         threading.Thread(target=cleanup, daemon=False).start()
 
@@ -562,9 +504,10 @@ class App:
             elif kind == "proxy_checked":
                 self.check_proxy_button.configure(state="normal")
             elif kind == "internet":
-                session, result = value
+                session, result, succeeded = value
                 if session == self.session:
                     self.status.set(result)
+                    self.ui.set_state("online" if succeeded else "unconfirmed")
                     self.append(result)
                     self.test_button.configure(state="normal")
             elif kind == "cleaned":
@@ -573,6 +516,8 @@ class App:
                     self.root.destroy()
                     return
                 self.status.set("Отключено")
+                self.active_count.set("0")
+                self.ui.set_state("offline")
                 self.start_button.configure(state="normal")
             elif kind == "tray_open":
                 self.show_window()
