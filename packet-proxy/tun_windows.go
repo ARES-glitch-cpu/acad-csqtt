@@ -32,6 +32,7 @@ type tunRecoveryState struct {
 	ProxyIP               string
 	AddProxyRoute         bool
 	ProxyInterfaceIndex   int
+	DNSIPs                []string
 	HelperPID             uint32
 }
 
@@ -92,6 +93,7 @@ func runTunMode(core, ip, dns, bypassIP string) error {
 		ProxyIP: proxyIP.String(),
 		AddProxyRoute: addProxyRoute,
 		ProxyInterfaceIndex: physicalRoute.InterfaceIndex,
+		DNSIPs: dnsServers,
 		HelperPID: uint32(os.Getpid()),
 	}
 	stateFile, err := writeTunRecoveryState(state)
@@ -134,6 +136,18 @@ func runTunMode(core, ip, dns, bypassIP string) error {
 	if err := runRoute("ADD", "128.0.0.0", "MASK", "128.0.0.0",
 		"0.0.0.0", "METRIC", "1", "IF", strconv.Itoa(iface.Index)); err != nil {
 		return fmt.Errorf("не удалось добавить второй системный маршрут TUN: %w", err)
+	}
+
+	// Pin the DNS resolver to Wintun as well: a pre-existing more-specific
+	// physical LAN route must not make Windows send resolver traffic outside TUN.
+	for _, server := range dnsServers {
+		if server == proxyIP.String() {
+			continue
+		}
+		if err := runRoute("ADD", server, "MASK", "255.255.255.255",
+			"0.0.0.0", "METRIC", "1", "IF", strconv.Itoa(iface.Index)); err != nil {
+			return fmt.Errorf("не удалось направить DNS %s в TUN: %w", server, err)
+		}
 	}
 
 	coreAddress, err := net.ResolveUDPAddr("udp4", core)
@@ -427,6 +441,11 @@ func cleanupTunState(state tunRecoveryState, path string) error {
 	if state.InterfaceIndex > 0 {
 		_ = runRoute("DELETE", "0.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
 		_ = runRoute("DELETE", "128.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
+	}
+	if state.InterfaceIndex > 0 {
+		for _, server := range state.DNSIPs {
+			_ = runRoute("DELETE", server, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.InterfaceIndex))
+		}
 	}
 	if state.AddProxyRoute && state.ProxyIP != "" && state.ProxyInterfaceIndex > 0 {
 		_ = runRoute("DELETE", state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
