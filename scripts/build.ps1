@@ -19,6 +19,28 @@ $goExe = if (Get-Command go -ErrorAction SilentlyContinue) { 'go' } elseif (Test
 & cargo build --release --locked --manifest-path core\rust-client\Cargo.toml
 if ($LASTEXITCODE -ne 0) { throw 'CSQTT build failed' }
 New-Item -ItemType Directory -Path bin -Force | Out-Null
+
+# WireGuard Go loads the signed Wintun DLL from the helper executable directory.
+# Pin both the upstream archive SHA-256 and the architecture-specific DLL.
+$wintunVersion = '0.14.1'
+$wintunSha256 = '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51'
+$wintunArchive = Join-Path $env:TEMP "wintun-$wintunVersion.zip"
+$wintunExtract = Join-Path $env:TEMP "csqtt-wintun-$wintunVersion"
+Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-$wintunVersion.zip" -OutFile $wintunArchive
+$actualWintunHash = (Get-FileHash -LiteralPath $wintunArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualWintunHash -ne $wintunSha256) {
+    throw "Wintun archive SHA-256 mismatch: expected $wintunSha256, got $actualWintunHash"
+}
+if (Test-Path -LiteralPath $wintunExtract) { Remove-Item -LiteralPath $wintunExtract -Recurse -Force }
+Expand-Archive -LiteralPath $wintunArchive -DestinationPath $wintunExtract -Force
+$wintunDll = Join-Path $wintunExtract 'wintun\bin\amd64\wintun.dll'
+$wintunLicense = Join-Path $wintunExtract 'wintun\LICENSE.txt'
+if (-not (Test-Path -LiteralPath $wintunDll) -or -not (Test-Path -LiteralPath $wintunLicense)) {
+    throw 'Official Wintun archive is missing the AMD64 DLL or license file.'
+}
+Copy-Item -LiteralPath $wintunDll -Destination bin\wintun.dll -Force
+Copy-Item -LiteralPath $wintunLicense -Destination bin\WINTUN-LICENSE.txt -Force
+
 Copy-Item -LiteralPath core\rust-client\target\release\client.exe -Destination bin\csqtt-core.exe -Force
 Push-Location packet-proxy
 try {
@@ -51,7 +73,7 @@ Get-ChildItem -LiteralPath $packageDir -Recurse -File |
     Where-Object Name -ne 'SHA256SUMS.txt' |
     ForEach-Object { '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.FullName.Substring($packageDir.Length + 1) } |
     Set-Content -LiteralPath (Join-Path $packageDir 'SHA256SUMS.txt') -Encoding ASCII
-& python -c "import pathlib,sys,zipfile; p=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(sys.argv[2], 'w', zipfile.ZIP_DEFLATED, strict_timestamps=False); [z.write(f, f.relative_to(p)) for f in p.rglob('*') if f.is_file()]; z.close(); z=zipfile.ZipFile(sys.argv[2]); assert z.testzip() is None; assert {'CSQTT.exe','bin/csqtt-core.exe','bin/packet-proxy.exe','bin/VCRUNTIME140.dll','assets/icons/CSQTT.ico','VERSION','SHA256SUMS.txt'}.issubset(z.namelist())" $packageDir $archiveName
+& python -c "import pathlib,sys,zipfile; p=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(sys.argv[2], 'w', zipfile.ZIP_DEFLATED, strict_timestamps=False); [z.write(f, f.relative_to(p)) for f in p.rglob('*') if f.is_file()]; z.close(); z=zipfile.ZipFile(sys.argv[2]); assert z.testzip() is None; assert {'CSQTT.exe','bin/csqtt-core.exe','bin/packet-proxy.exe','bin/wintun.dll','bin/WINTUN-LICENSE.txt','bin/VCRUNTIME140.dll','assets/icons/CSQTT.ico','VERSION','SHA256SUMS.txt'}.issubset(z.namelist())" $packageDir $archiveName
 if ($LASTEXITCODE -ne 0) { throw 'ZIP packaging failed' }
 $archiveHash = (Get-FileHash -LiteralPath $archiveName -Algorithm SHA256).Hash.ToLowerInvariant()
 "$archiveHash  $archiveName" | Set-Content -LiteralPath "$archiveName.sha256" -Encoding ASCII

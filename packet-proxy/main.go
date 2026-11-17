@@ -45,8 +45,7 @@ func main() {
 	}
 	if *mode == "tun" {
 		if err := runTunMode(*core, *ip, *dns, *bypassIP); err != nil {
-			log.Print("TUN: ", err)
-			return
+			log.Fatal("TUN: ", err)
 		}
 		return
 	}
