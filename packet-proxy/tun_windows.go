@@ -43,7 +43,7 @@ type routeInfo struct {
 	Metric         int
 }
 
-func runTunMode(core, ip, dns, bypassIP, _ string) error {
+func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
 	if err := requireElevated(); err != nil {
 		return err
 	}

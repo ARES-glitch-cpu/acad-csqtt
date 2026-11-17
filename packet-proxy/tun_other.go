@@ -4,7 +4,7 @@ package main
 
 import "errors"
 
-func runTunMode(core, ip, dns, bypassIP, tunUDS string) error {
+func runTunMode(core, ip, dns, bypassIP, tunUDS string, _ int) error {
 	return errors.New("системный режим TUN поддерживается только в Windows-сборке")
 }
 

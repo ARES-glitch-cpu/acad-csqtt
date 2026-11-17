@@ -30,6 +30,7 @@ func main() {
 	mode := flag.String("mode", "proxy", "proxy or tun")
 	bypassIP := flag.String("bypass-ip", "", "Corporate HTTP proxy IPv4 address to keep outside the TUN")
 	tunUDS := flag.String("tun-uds", "", "Abstract Unix socket name used to pass the native TUN file descriptor to CSQTT")
+	parentPID := flag.Int("parent-pid", 0, "GUI process ID watched by the native TUN helper")
 	recoverTUN := flag.Bool("recover-tun", false, "Restore routes and DNS left by an interrupted TUN session")
 	flag.Parse()
 	if *recoverTUN {
@@ -45,7 +46,7 @@ func main() {
 		return
 	}
 	if *mode == "tun" {
-		if err := runTunMode(*core, *ip, *dns, *bypassIP, *tunUDS); err != nil {
+		if err := runTunMode(*core, *ip, *dns, *bypassIP, *tunUDS, *parentPID); err != nil {
 			log.Fatal("TUN: ", err)
 		}
 		return
