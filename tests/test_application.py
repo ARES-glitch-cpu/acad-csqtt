@@ -217,6 +217,7 @@ class LogExportTests(unittest.TestCase):
             self.assertFalse(focused.startswith(str(desktop.logs)))
         bar = desktop.titlebar
         x, y = self.root.winfo_x(), self.root.winfo_y()
+        size = (self.root.winfo_width(), self.root.winfo_height())
         bar.event_generate("<ButtonPress-1>", x=250, y=20, rootx=x+250, rooty=y+20)
         heartbeats = []
         for delta in range(5, 101, 5):
@@ -227,6 +228,7 @@ class LogExportTests(unittest.TestCase):
         self.root.update()
         self.assertEqual(len(heartbeats), 20)
         self.assertEqual((self.root.winfo_x(), self.root.winfo_y()), (x+100, y+100))
+        self.assertEqual((self.root.winfo_width(), self.root.winfo_height()), size)
         desktop.maximize_button.invoke()
         self.root.update()
         self.assertEqual(self.root.state(), "zoomed")

@@ -128,12 +128,24 @@ class WindowChrome:
             fraction = (start_x - window_x) / max(1, self.root.winfo_width())
             width, height = self.normal_size or (round(1120*self.scale), round(900*self.scale))
             self.root.state("normal")
+            if self.hwnd:
+                rect = wintypes.RECT()
+                if self.user.GetWindowRect(self.hwnd, ctypes.byref(rect)):
+                    width = rect.right - rect.left
             window_x = event.x_root - round(width * fraction)
             window_y = event.y_root - round(20*self.scale)
-            self.root.geometry(f"{width}x{height}+{window_x}+{window_y}")
+            self.move_window(window_x, window_y)
             self.drag_origin = (event.x_root, event.y_root, window_x, window_y)
         else:
-            self.root.geometry(f"+{window_x + dx}+{window_y + dy}")
+            self.move_window(window_x + dx, window_y + dy)
+
+    def move_window(self, x, y):
+        if self.hwnd:
+            # Change position only. Re-parsing Tk geometry also reapplies its
+            # cached native caption height and resizes a frameless window.
+            self.user.SetWindowPos(self.hwnd, None, x, y, 0, 0, 0x0015)  # NOSIZE | NOZORDER | NOACTIVATE
+        else:
+            self.root.geometry(f"+{x}+{y}")
 
     def drag_end(self, event=None):
         self.drag_origin = None
