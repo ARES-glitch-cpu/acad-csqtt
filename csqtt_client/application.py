@@ -12,13 +12,19 @@ import socket
 import ssl
 import subprocess
 import threading
+import shutil
+import sys
+import uuid
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW
+from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW, CORE_FILENAME, HELPER_FILENAME
 from csqtt_client.models.profile import Profile
-from csqtt_client.platform.windows.profiles import load_profile, save_profile, delete_profile, profile_exists
+if os.name == "nt":
+    from csqtt_client.platform.windows.profiles import load_profile, save_profile, delete_profile, profile_exists
+else:
+    from csqtt_client.platform.linux.profiles import load_profile, save_profile, delete_profile, profile_exists
 from csqtt_client.services.proxy import proxy_connect
 from csqtt_client.services.tunnel import core_command
 
@@ -37,6 +43,7 @@ class App:
         self.stopping = False
         self.tray = None
         self.tun_recovery_error = None
+        self.tun_uds = None
         try:
             profile = load_profile()
         except Exception:
@@ -57,7 +64,7 @@ class App:
         self.log_menu.add_command(label="Выделить всё", command=self.select_log)
         self.log.bind("<Button-3>", self.show_log_menu)
         self.recover_tun_state()
-        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray if os.name == "nt" else self.close)
         root.bind("<Unmap>", self.on_minimize)
         root.bind("<Destroy>", self.on_destroy, add="+")
         root.after(100, self.poll)
@@ -97,7 +104,7 @@ class App:
             self.close()
 
     def on_minimize(self, event):
-        if event.widget is self.root and self.root.state() == "iconic":
+        if os.name == "nt" and event.widget is self.root and self.root.state() == "iconic":
             self.hide_to_tray()
 
     def show_window(self):
@@ -194,13 +201,15 @@ class App:
         try:
             profile = self.profile()
             hashes = profile.validate()
-            if not (ROOT / "bin" / "csqtt-core.exe").exists() or not (ROOT / "bin" / "packet-proxy.exe").exists():
-                raise ValueError("Не найдены bin/csqtt-core.exe и bin/packet-proxy.exe. Распакуйте portable целиком.")
+            if not (ROOT / "bin" / CORE_FILENAME).exists() or not (ROOT / "bin" / HELPER_FILENAME).exists():
+                raise ValueError(f"Не найдены bin/{CORE_FILENAME} и bin/{HELPER_FILENAME}. Распакуйте portable целиком.")
             if profile.mode == "tun":
                 if self.tun_recovery_error:
                     raise ValueError("Сначала восстановите сетевые настройки Windows: " + self.tun_recovery_error)
                 if os.name == "nt" and not ctypes.windll.shell32.IsUserAnAdmin():
                     raise ValueError("Режим TUN требует прав администратора. Закройте CSQTT и запустите его через «Запуск от имени администратора». Режим Proxy работает без повышения прав.")
+                if sys.platform == "linux" and os.geteuid() != 0 and not shutil.which("pkexec"):
+                    raise ValueError("Для Linux TUN установите polkit (команда pkexec) и запустите приложение из графического сеанса.")
             else:
                 # Check listener conflicts before establishing local proxies.
                 for port in (profile.socks_port, profile.http_port):
@@ -209,7 +218,8 @@ class App:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as check:
                 check.bind(("127.0.0.1", 0))
                 self.packet_port = check.getsockname()[1]
-            args, env = core_command(profile, self.packet_port)
+            self.tun_uds = f"csqtt-{uuid.uuid4().hex}" if profile.mode == "tun" and sys.platform == "linux" else None
+            args, env = core_command(profile, self.packet_port, self.tun_uds)
             if self.remember.get():
                 save_profile(profile)
             else:
@@ -229,7 +239,7 @@ class App:
             self.download_total.set("0.00")
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
-            mode_text = "системный TUN (Wintun)" if profile.mode == "tun" else "локальные SOCKS5/HTTP-прокси"
+            mode_text = ("системный TUN (Linux /dev/net/tun)" if sys.platform == "linux" else "системный TUN (Wintun)") if profile.mode == "tun" else "локальные SOCKS5/HTTP-прокси"
             self.append(f"Запущено ядро: TCP через HTTP CONNECT, TURN :443; режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
         except Exception as error:
             self.ui.show_page("connection")
@@ -247,11 +257,15 @@ class App:
             return
         profile = self.running_profile
         ip, dns = self.config
-        args = [str(ROOT / "bin" / "packet-proxy.exe"), "--mode", profile.mode,
+        args = [str(ROOT / "bin" / HELPER_FILENAME), "--mode", profile.mode,
                 "--core", f"127.0.0.1:{self.packet_port}", "--ip", ip, "--dns", dns]
         if profile.mode == "tun":
             proxy_host, _ = profile.proxy.rsplit(":", 1)
             args += ["--bypass-ip", proxy_host]
+            if self.tun_uds:
+                args += ["--tun-uds", self.tun_uds, "--parent-pid", str(os.getpid())]
+            if sys.platform == "linux" and os.geteuid() != 0:
+                args.insert(0, shutil.which("pkexec"))
         else:
             args += ["--socks", f"127.0.0.1:{profile.socks_port}",
                      "--http", f"127.0.0.1:{profile.http_port}"]
@@ -268,7 +282,8 @@ class App:
         if kind == "helper" and (line.startswith("PROXY_READY") or line.startswith("TUN_READY")):
             if line.startswith("TUN_READY"):
                 self.status.set("Системный TUN поднят. Проверяю доступ в интернет…")
-                self.append("Wintun и системные маршруты настроены; внешний транспорт CSQTT исключён из TUN.")
+                description = "Linux /dev/net/tun" if sys.platform == "linux" else "Wintun"
+                self.append(f"{description} и системные маршруты настроены; внешний транспорт CSQTT исключён из TUN.")
             else:
                 self.status.set("Туннель готов, локальные прокси запущены. Проверяю интернет…")
             self.ui.set_state("checking")

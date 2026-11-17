@@ -1,15 +1,17 @@
 """Build an explicit TCP-only core command and its private environment."""
 import os
 
-from csqtt_client.config import ROOT
+from csqtt_client.config import ROOT, CORE_FILENAME
 
 
-def core_command(profile, packet_port):
+def core_command(profile, packet_port, tun_uds=None):
     hashes = profile.validate()
-    args = [str(ROOT / "bin" / "csqtt-core.exe"), "--peer", profile.server.strip(),
+    args = [str(ROOT / "bin" / CORE_FILENAME), "--peer", profile.server.strip(),
             "--listen", f"127.0.0.1:{packet_port}", "--vk", ",".join(hashes),
             "--workers", profile.workers, "--exact-workers", "--turn-transport", "tcp", "--port", "443",
             "--obfs", profile.obfs, "--srtp-mode", profile.srtp, "--gen", profile.generation, "--salt", profile.salt]
+    if tun_uds:
+        args += ["--tun-uds", tun_uds]
     if profile.turn.strip():
         args += ["--turn", profile.turn.strip()]
     env = os.environ.copy()
