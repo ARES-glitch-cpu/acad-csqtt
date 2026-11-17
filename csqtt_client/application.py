@@ -71,7 +71,7 @@ class App:
 
     def recover_tun_state(self):
         """Remove stale TUN routes left by an interrupted previous run."""
-        helper = ROOT / "bin" / "packet-proxy.exe"
+        helper = ROOT / "bin" / HELPER_FILENAME
         if os.name != "nt" or not helper.exists():
             return
         try:
