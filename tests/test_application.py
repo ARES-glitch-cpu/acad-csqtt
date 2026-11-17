@@ -34,6 +34,10 @@ class ClientTests(unittest.TestCase):
 
     def test_hash_normalization_and_validation(self):
         self.assertEqual(normalize_hashes("https://vk.com/call/join/abc123?x=1\nabc123;def456"), ["abc123", "def456"])
+        tun_profile = replace(self.profile(), mode="tun")
+        self.assertEqual(tun_profile.validate(), ["testhash123456"])
+        with self.assertRaisesRegex(ValueError, "IPv4-адрес"):
+            replace(tun_profile, proxy="[2001:db8::1]:3128").validate()
         for profile in [replace(self.profile(), hashes=""), replace(self.profile(), socks_port="8080"),
                         replace(self.profile(), workers="0"), replace(self.profile(), proxy="proxy.invalid:3128"),
                         replace(self.profile(), turn="turn:example.com:443"), replace(self.profile(), password="")]:

@@ -27,11 +27,12 @@ const (
 )
 
 type tunRecoveryState struct {
-	InterfaceName  string
-	InterfaceIndex int
-	ProxyIP        string
-	AddProxyRoute  bool
-	ParentPID      uint32
+	InterfaceName        string
+	InterfaceIndex       int
+	ProxyIP               string
+	AddProxyRoute         bool
+	ProxyInterfaceIndex   int
+	HelperPID             uint32
 }
 
 type routeInfo struct {
@@ -84,13 +85,14 @@ func runTunMode(core, ip, dns, bypassIP string) error {
 	if err != nil {
 		return fmt.Errorf("не удалось определить физический маршрут к HTTP-прокси %s: %w", proxyIP, err)
 	}
-	addProxyRoute := physicalRoute.PrefixLength < 32 || physicalRoute.InterfaceIndex != iface.Index
+	addProxyRoute := physicalRoute.PrefixLength < 32
 	state := tunRecoveryState{
 		InterfaceName: ifName,
 		InterfaceIndex: iface.Index,
 		ProxyIP: proxyIP.String(),
 		AddProxyRoute: addProxyRoute,
-		ParentPID: uint32(os.Getppid()),
+		ProxyInterfaceIndex: physicalRoute.InterfaceIndex,
+		HelperPID: uint32(os.Getpid()),
 	}
 	stateFile, err := writeTunRecoveryState(state)
 	if err != nil {
@@ -146,7 +148,7 @@ func runTunMode(core, ip, dns, bypassIP string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchParentProcess(state.ParentPID, cancel)
+	go watchParentProcess(state.HelperPID, cancel)
 	go watchStopCommand(cancel)
 
 	errCh := make(chan error, 2)
@@ -292,11 +294,9 @@ func findBestIPv4Route(target netip.Addr) (routeInfo, error) {
 		if ifIndex == 0 {
 			continue
 		}
-		gateway := fields[2]
-		if strings.EqualFold(gateway, "On-link") {
-			gateway = "0.0.0.0"
-		} else if address, parseErr := netip.ParseAddr(gateway); parseErr != nil || !address.Is4() {
-			continue
+		gateway := "0.0.0.0"
+		if address, parseErr := netip.ParseAddr(fields[2]); parseErr == nil && address.Is4() {
+			gateway = address.String()
 		}
 		if prefixLength > best.PrefixLength ||
 			(prefixLength == best.PrefixLength && metric < best.Metric) {
@@ -377,7 +377,7 @@ func recoverTunState() (bool, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return false, fmt.Errorf("повреждён файл восстановления TUN: %w", err)
 	}
-	if state.ParentPID != 0 && processIsRunning(state.ParentPID) {
+	if state.HelperPID != 0 && processIsRunning(state.HelperPID) {
 		return false, nil
 	}
 	if err := cleanupTunState(state, path); err != nil {
@@ -387,8 +387,29 @@ func recoverTunState() (bool, error) {
 }
 
 func recoverTunStateOnlyIfOrphaned() error {
-	_, err := recoverTunState()
-	return err
+	recovered, err := recoverTunState()
+	if err != nil || recovered {
+		return err
+	}
+	path, pathErr := tunStatePath()
+	if pathErr != nil {
+		return pathErr
+	}
+	data, readErr := os.ReadFile(path)
+	if errors.Is(readErr, os.ErrNotExist) {
+		return nil
+	}
+	if readErr != nil {
+		return readErr
+	}
+	var state tunRecoveryState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	if state.HelperPID != 0 && processIsRunning(state.HelperPID) {
+		return errors.New("обнаружен другой активный TUN-сеанс CSQTT")
+	}
+	return nil
 }
 
 func processIsRunning(pid uint32) bool {
@@ -406,9 +427,9 @@ func cleanupTunState(state tunRecoveryState, path string) error {
 	if state.InterfaceIndex > 0 {
 		_ = runRoute("DELETE", "0.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
 		_ = runRoute("DELETE", "128.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
-		if state.AddProxyRoute && state.ProxyIP != "" {
-			_ = runRoute("DELETE", state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.InterfaceIndex))
-		}
+	}
+	if state.AddProxyRoute && state.ProxyIP != "" && state.ProxyInterfaceIndex > 0 {
+		_ = runRoute("DELETE", state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
 	}
 	if state.InterfaceName != "" {
 		if err := runNetsh("interface", "ipv4", "set", "dnsservers",

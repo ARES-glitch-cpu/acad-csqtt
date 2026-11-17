@@ -27,7 +27,9 @@ class Profile:
         if not host or not 1 <= port <= 65535:
             raise ValueError("Сервер csqtt: укажите IP или домен и порт, например 203.0.113.10:443.")
         phost, pport = split_address(self.proxy)
-        ipaddress.ip_address(phost)
+        proxy_address = ipaddress.ip_address(phost)
+        if self.mode == "tun" and not isinstance(proxy_address, ipaddress.IPv4Address):
+            raise ValueError("Для режима TUN укажите IPv4-адрес корпоративного HTTP-прокси.")
         if not 1 <= pport <= 65535:
             raise ValueError("Проверьте порт корпоративного прокси.")
         if not self.password:
