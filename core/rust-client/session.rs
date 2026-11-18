@@ -947,7 +947,7 @@ pub async fn run_session(
     }
     if !crate::http_proxy::configured() {
         for address in &credentials.server_addresses {
-            crate::log_error!("[TUN_BYPASS] {}", address.ip());
+            crate::log_error!("TUN_BYPASS:{}", address.ip());
         }
     }
     let turn_address = select_turn_address(&credentials.server_addresses, &config)?;
