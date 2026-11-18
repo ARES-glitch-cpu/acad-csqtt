@@ -60,11 +60,13 @@ def parse_admin_txt(content: str) -> dict[str, str]:
             raise ValueError("Для сервера нужны оба параметра server_host и server_port.")
         host = server_host.strip("[]")
         server = f"[{host}]:{server_port}" if ":" in host else f"{host}:{server_port}"
-    if server:
-        result["server"] = server
+    if not server:
+        raise ValueError("В TXT-файле не указан server=host:port.")
+    result["server"] = server
     password = single("password")
-    if password:
-        result["password"] = password
+    if not password:
+        raise ValueError("В TXT-файле не указан пароль сервера (server_password=...).")
+    result["password"] = password
 
     proxy = single("proxy")
     proxy_host = single("proxy_host")
@@ -81,15 +83,18 @@ def parse_admin_txt(content: str) -> dict[str, str]:
 
     proxy_user = single("proxy_user")
     proxy_password = single("proxy_password")
-    if proxy_user:
-        result["proxy_user"] = proxy_user
-    if proxy_password:
-        result["proxy_password"] = proxy_password
+    requested_mode = single("internet_mode").lower() if "internet_mode" in values else ("proxy" if proxy else "direct")
+    if requested_mode not in ("direct", "proxy"):
+        raise ValueError("internet_mode должен быть direct или proxy.")
+    if requested_mode == "proxy" and not proxy:
+        raise ValueError("При internet_mode=proxy укажите proxy=host:port.")
+    if (proxy_user or proxy_password) and not proxy:
+        raise ValueError("Указаны реквизиты прокси, но не задан адрес proxy=host:port.")
 
-    if "internet_mode" in values:
-        result["internet_mode"] = single("internet_mode").lower()
-    elif not proxy:
-        result["internet_mode"] = "direct"
+    result["proxy"] = proxy
+    result["proxy_user"] = proxy_user
+    result["proxy_password"] = proxy_password
+    result["internet_mode"] = requested_mode
 
     hashes: list[str] = []
     for record in values.get("call", []) + values.get("hashes", []):
@@ -97,8 +102,7 @@ def parse_admin_txt(content: str) -> dict[str, str]:
         for item in normalize_hashes(record):
             if item not in hashes:
                 hashes.append(item)
-    if hashes:
-        if len(hashes) > 6:
-            raise ValueError("В TXT-файле больше шести ссылок/хешей звонков VK.")
-        result["hashes"] = "\n".join(hashes)
+    if len(hashes) > 6:
+        raise ValueError("В TXT-файле больше шести ссылок/хешей звонков VK.")
+    result["hashes"] = "\n".join(hashes)
     return result
