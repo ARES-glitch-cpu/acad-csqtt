@@ -27,6 +27,9 @@ class Profile:
         host, port = split_address(self.server)
         if not host or not 1 <= port <= 65535:
             raise ValueError("Сервер csqtt: укажите IP или домен и порт, например 203.0.113.10:443.")
+        hashes = normalize_hashes(self.hashes)
+        if not 1 <= len(hashes) <= 6:
+            raise ValueError("Нужно от 1 до 6 хешей VK или ссылок /call/join/.")
         if self.internet_mode not in ("direct", "proxy"):
             raise ValueError("Выберите прямое подключение или HTTP-прокси.")
         if self.internet_mode == "proxy":
