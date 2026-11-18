@@ -7,7 +7,6 @@ import re
 @dataclass
 class Profile:
     server: str = ""
-    share_link: str = ""
     password: str = ""
     hashes: str = ""
     proxy: str = "10.0.0.1:3128"
@@ -23,6 +22,9 @@ class Profile:
     salt: str = ""
     mode: str = "proxy"
     internet_mode: str = "direct"
+    # Keep new fields at the end to preserve the historical positional signature.
+    share_link: str = ""
+    client_password: str = ""
 
     def validate(self):
         host, port = split_address(self.server)
