@@ -205,6 +205,9 @@ class App:
     def start(self):
         try:
             profile = self.profile()
+            # Persist the form as entered. The parsed server password belongs
+            # to this active session and must not overwrite the admin form.
+            profile_to_save = profile
             if self.ui.role == "client":
                 share = parse_csqtt_link(self.vars["share_link"].get())
                 server_password = share.password or profile.client_password
@@ -239,7 +242,7 @@ class App:
             self.tun_uds = f"csqtt-{uuid.uuid4().hex}" if profile.mode == "tun" and sys.platform == "linux" else None
             args, env = core_command(profile, self.packet_port, self.tun_uds)
             if self.remember.get():
-                save_profile(profile)
+                save_profile(profile_to_save)
             else:
                 delete_profile()
             self.session += 1
