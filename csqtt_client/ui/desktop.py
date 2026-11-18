@@ -299,9 +299,15 @@ class DesktopUI:
 
         self.client_link_group = frame(server.body)
         self.field(self.client_link_group, "Ссылка подключения csqtt://", "share_link")
+        self.field(
+            self.client_link_group,
+            "Пароль CSQTT (если не указан в ссылке)",
+            "password",
+            secret=True,
+        )
         label(
             self.client_link_group,
-            "Ссылка должна быть скопирована целиком из панели CSQTT.",
+            "Ссылка должна быть скопирована целиком из панели CSQTT. Если в ней нет пароля — укажите его здесь.",
             color=DIM, size=8, wraplength=520, justify="left",
         ).pack(anchor="w", pady=(7, 2))
         self.client_link_group.pack_forget()
