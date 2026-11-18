@@ -156,7 +156,7 @@ func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error
 		HelperPID: os.Getpid(),
 	}
 	for _, server := range dnsServers {
-		if server != proxyIP {
+		if !linuxBypassContains(bypassIPs, server) {
 			state.DNSIPs = append(state.DNSIPs, server.String())
 		}
 	}
