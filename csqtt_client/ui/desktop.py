@@ -298,7 +298,7 @@ class DesktopUI:
         self.import_txt_button.pack(anchor="w", pady=(14, 0))
 
         self.client_link_group = frame(server.body)
-        self.field(self.client_link_group, "Ссылка подключения csqtt://", "share_link")
+        self.field(self.client_link_group, "Ссылка подключения csqtt://", "share_link", secret=True)
         self.field(
             self.client_link_group,
             "Пароль CSQTT (если не указан в ссылке)",
