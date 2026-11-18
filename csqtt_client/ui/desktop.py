@@ -283,8 +283,14 @@ class DesktopUI:
         label(server.body, "По одному на строку · до 6 хешей", color=DIM, size=8).pack(anchor="w", pady=(7, 2))
         side = frame(body)
         side.grid(row=0, column=1, sticky="new")
-        proxy = self.section(side, "Корпоративный прокси", "HTTP CONNECT · авторизация Basic")
-        proxy.pack(fill="x")
+        internet = self.section(side, "Доступ в интернет", "Прямое подключение через домашний Wi-Fi или мобильную сеть либо корпоративный HTTP-прокси.")
+        internet.pack(fill="x")
+        internet_choice = tk.StringVar(value="Напрямую (Wi-Fi / мобильный интернет)" if self.app.vars["internet_mode"].get() == "direct" else "Через HTTP-прокси")
+        internet_box = ttk.Combobox(internet.body, textvariable=internet_choice,
+                                    values=("Напрямую (Wi-Fi / мобильный интернет)", "Через HTTP-прокси"), state="readonly")
+        internet_box.pack(fill="x", pady=(8, 4))
+        proxy = self.section(side, "Параметры HTTP-прокси", "Нужны только при выборе соответствующего способа доступа.")
+        proxy.pack(fill="x", pady=(12, 0))
         self.field(proxy.body, "Адрес прокси · IP:порт", "proxy")
         self.field(proxy.body, "Логин", "proxy_user")
         self.field(proxy.body, "Пароль прокси", "proxy_password", secret=True)
@@ -294,6 +300,15 @@ class DesktopUI:
                                     wraplength=360, justify="left")
         self.proxy_feedback.pack(fill="x", pady=(10, 0))
         self.proxy_feedback.bind("<Configure>", lambda e: self.proxy_feedback.configure(wraplength=max(120, e.width)))
+        def update_internet_mode(_event=None):
+            direct = internet_choice.get().startswith("Напрямую")
+            self.app.vars["internet_mode"].set("direct" if direct else "proxy")
+            state = "disabled" if direct else "normal"
+            for key in ("proxy", "proxy_user", "proxy_password"):
+                self.entries[key].configure(state=state)
+            self.app.check_proxy_button.configure(state=state)
+        internet_box.bind("<<ComboboxSelected>>", update_internet_mode)
+        update_internet_mode()
         local = self.section(side, "Локальные прокси")
         local.pack(fill="x", pady=(14, 0))
         self.endpoints = {}
