@@ -85,6 +85,23 @@ class AdminTxtTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "неизвестный параметр"):
             parse_admin_txt("mystery=value\n")
 
+    def test_admin_txt_without_proxy_clears_proxy_and_call_fields(self):
+        values = parse_admin_txt(
+            "server=csqtt.example:46000\n"
+            "server_password=server-secret\n"
+        )
+        self.assertEqual(values["internet_mode"], "direct")
+        self.assertEqual(values["proxy"], "")
+        self.assertEqual(values["proxy_user"], "")
+        self.assertEqual(values["proxy_password"], "")
+        self.assertEqual(values["hashes"], "")
+
+    def test_admin_txt_requires_server_and_server_password(self):
+        with self.assertRaisesRegex(ValueError, "не указан server"):
+            parse_admin_txt("server_password=secret\n")
+        with self.assertRaisesRegex(ValueError, "не указан пароль сервера"):
+            parse_admin_txt("server=csqtt.example:46000\n")
+
 
 if __name__ == "__main__":
     unittest.main()
