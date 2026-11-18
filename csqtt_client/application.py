@@ -213,7 +213,7 @@ class App:
                     profile,
                     server=share.server,
                     password=share.password,
-                    hashes="\\n".join(share.hashes) if share.hashes else profile.hashes,
+                    hashes="\n".join(share.hashes) if share.hashes else profile.hashes,
                 )
             hashes = profile.validate()
             if not (ROOT / "bin" / CORE_FILENAME).exists() or not (ROOT / "bin" / HELPER_FILENAME).exists():
