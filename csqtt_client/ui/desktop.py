@@ -302,7 +302,7 @@ class DesktopUI:
         self.field(
             self.client_link_group,
             "Пароль CSQTT (если не указан в ссылке)",
-            "password",
+            "client_password",
             secret=True,
         )
         label(
