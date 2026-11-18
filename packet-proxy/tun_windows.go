@@ -26,14 +26,22 @@ const (
 	tunMTU       = 1280
 )
 
+type tunBypassRoute struct {
+	IP             string
+	Gateway        string
+	InterfaceIndex int
+	AddRoute       bool
+}
+
 type tunRecoveryState struct {
 	InterfaceName        string
 	InterfaceIndex       int
-	ProxyIP               string
-	AddProxyRoute         bool
-	ProxyInterfaceIndex   int
-	DNSIPs                []string
-	HelperPID             uint32
+	ProxyIP              string
+	AddProxyRoute        bool
+	ProxyInterfaceIndex  int
+	BypassRoutes         []tunBypassRoute
+	DNSIPs               []string
+	HelperPID            uint32
 }
 
 type routeInfo struct {
@@ -57,9 +65,9 @@ func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
 	if err != nil || !localIP.Is4() {
 		return fmt.Errorf("--ip должен быть IPv4-адресом из TUNCONF")
 	}
-	proxyIP, err := netip.ParseAddr(bypassIP)
-	if err != nil || !proxyIP.Is4() {
-		return fmt.Errorf("--bypass-ip должен содержать IPv4 корпоративного HTTP-прокси")
+	bypassIPs, err := parseBypassIPs(bypassIP)
+	if err != nil {
+		return err
 	}
 	dnsServers, err := parseDNSServers(dns)
 	if err != nil {
@@ -81,21 +89,28 @@ func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
 		return err
 	}
 
-	// Capture the physical route to the corporate proxy before installing /1 routes.
-	physicalRoute, err := findBestIPv4Route(proxyIP)
-	if err != nil {
-		return fmt.Errorf("не удалось определить физический маршрут к HTTP-прокси %s: %w", proxyIP, err)
+	// Preserve physical routes to every TURN endpoint (or the selected HTTP proxy)
+	// before installing the split-default routes through Wintun.
+	bypassRoutes := make([]tunBypassRoute, 0, len(bypassIPs))
+	for _, address := range bypassIPs {
+		physicalRoute, routeErr := findBestIPv4Route(address)
+		if routeErr != nil {
+			return fmt.Errorf("не удалось определить физический маршрут к серверу %s: %w", address, routeErr)
+		}
+		bypassRoutes = append(bypassRoutes, tunBypassRoute{
+			IP: address.String(), Gateway: physicalRoute.Gateway,
+			InterfaceIndex: physicalRoute.InterfaceIndex,
+			AddRoute: physicalRoute.PrefixLength < 32,
+		})
 	}
-	addProxyRoute := physicalRoute.PrefixLength < 32
 	state := tunRecoveryState{
 		InterfaceName: ifName,
 		InterfaceIndex: iface.Index,
-		ProxyIP: proxyIP.String(),
-		AddProxyRoute: addProxyRoute,
-		ProxyInterfaceIndex: physicalRoute.InterfaceIndex,
+		BypassRoutes: bypassRoutes,
 		DNSIPs: dnsServers,
 		HelperPID: uint32(os.Getpid()),
 	}
+
 	stateFile, err := writeTunRecoveryState(state)
 	if err != nil {
 		return err
@@ -118,14 +133,17 @@ func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
 		return fmt.Errorf("не удалось настроить DNS TUN: %w", err)
 	}
 
-	if addProxyRoute {
-		gateway := physicalRoute.Gateway
+	for _, route := range bypassRoutes {
+		if !route.AddRoute {
+			continue
+		}
+		gateway := route.Gateway
 		if gateway == "" {
 			gateway = "0.0.0.0"
 		}
-		if err := runRoute("ADD", proxyIP.String(), "MASK", "255.255.255.255",
-			gateway, "METRIC", "1", "IF", strconv.Itoa(physicalRoute.InterfaceIndex)); err != nil {
-			return fmt.Errorf("не удалось закрепить маршрут к корпоративному прокси вне TUN: %w", err)
+		if err := runRoute("ADD", route.IP, "MASK", "255.255.255.255",
+			gateway, "METRIC", "1", "IF", strconv.Itoa(route.InterfaceIndex)); err != nil {
+			return fmt.Errorf("не удалось закрепить физический маршрут к серверу %s вне TUN: %w", route.IP, err)
 		}
 	}
 
@@ -141,7 +159,7 @@ func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
 	// Pin the DNS resolver to Wintun as well: a pre-existing more-specific
 	// physical LAN route must not make Windows send resolver traffic outside TUN.
 	for _, server := range dnsServers {
-		if server == proxyIP.String() {
+		if bypassIPContains(bypassIPs, server) {
 			continue
 		}
 		if err := runRoute("ADD", server, "MASK", "255.255.255.255",
@@ -220,6 +238,38 @@ func requireElevated() error {
 		return errors.New("для режима TUN необходим запуск от имени администратора")
 	}
 	return nil
+}
+
+func parseBypassIPs(value string) ([]netip.Addr, error) {
+	seen := make(map[netip.Addr]bool)
+	var result []netip.Addr
+	for _, item := range strings.Split(value, ",") {
+		address, err := netip.ParseAddr(strings.TrimSpace(item))
+		if err != nil || !address.Is4() {
+			continue
+		}
+		if !seen[address] {
+			seen[address] = true
+			result = append(result, address)
+		}
+	}
+	if len(result) == 0 {
+		return nil, errors.New("--bypass-ip must contain at least one TURN server or HTTP proxy IPv4 address")
+	}
+	return result, nil
+}
+
+func bypassIPContains(addresses []netip.Addr, value string) bool {
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return false
+	}
+	for _, candidate := range addresses {
+		if candidate == address {
+			return true
+		}
+	}
+	return false
 }
 
 func parseDNSServers(value string) ([]string, error) {
@@ -447,7 +497,14 @@ func cleanupTunState(state tunRecoveryState, path string) error {
 			_ = runRoute("DELETE", server, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.InterfaceIndex))
 		}
 	}
-	if state.AddProxyRoute && state.ProxyIP != "" && state.ProxyInterfaceIndex > 0 {
+	if len(state.BypassRoutes) > 0 {
+		for _, route := range state.BypassRoutes {
+			if route.AddRoute && route.InterfaceIndex > 0 {
+				_ = runRoute("DELETE", route.IP, "MASK", "255.255.255.255", "IF", strconv.Itoa(route.InterfaceIndex))
+			}
+		}
+	} else if state.AddProxyRoute && state.ProxyIP != "" && state.ProxyInterfaceIndex > 0 {
+		// Backward-compatible cleanup for an older recovery state file.
 		_ = runRoute("DELETE", state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
 	}
 	if state.InterfaceName != "" {
