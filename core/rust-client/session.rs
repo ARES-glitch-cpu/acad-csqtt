@@ -1,5 +1,6 @@
 use crate::{
     auth::TurnCredentials,
+    dns,
     dispatcher::{Dispatcher, WorkerChannels},
     events::Events,
     obfs::{ObfsCipher, ObfsConfig, ObfsMode, ObfsState, SessionCipher, is_rtp_packet},
