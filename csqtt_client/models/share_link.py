@@ -7,6 +7,7 @@ Secrets are never included in exception text.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import ipaddress
 import re
@@ -60,8 +61,12 @@ def _looks_like_base64(value: str) -> bool:
 def _parse_sealed(value: str) -> ShareLink:
     compact = "".join(value.split()).replace("+", "-").replace("/", "_").rstrip("=")
     try:
-        raw = base64.urlsafe_b64decode(compact + "=" * (-len(compact) % 4))
-    except (ValueError, base64.binascii.Error):
+        raw = base64.b64decode(
+            compact + "=" * (-len(compact) % 4),
+            altchars=b"-_",
+            validate=True,
+        )
+    except (ValueError, binascii.Error):
         raise ValueError("Зашифрованная ссылка CSQTT повреждена или обрезана.") from None
 
     plain = None
