@@ -42,6 +42,7 @@ type tunRecoveryState struct {
 	BypassRoutes         []tunBypassRoute
 	DNSIPs               []string
 	HelperPID            uint32
+	ParentPID            uint32
 }
 
 type routeInfo struct {
@@ -51,9 +52,12 @@ type routeInfo struct {
 	Metric         int
 }
 
-func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
+func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
 	if err := requireElevated(); err != nil {
 		return err
+	}
+	if parentPID <= 0 {
+		return errors.New("для TUN нужен корректный --parent-pid главного приложения")
 	}
 	if err := recoverTunStateOnlyIfOrphaned(); err != nil {
 		return fmt.Errorf("не удалось очистить предыдущую TUN-сессию: %w", err)
@@ -109,6 +113,7 @@ func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
 		BypassRoutes: bypassRoutes,
 		DNSIPs: dnsServers,
 		HelperPID: uint32(os.Getpid()),
+		ParentPID: uint32(parentPID),
 	}
 
 	stateFile, err := writeTunRecoveryState(state)
@@ -180,7 +185,7 @@ func runTunMode(core, ip, dns, bypassIP, _ string, _ int) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go watchParentProcess(state.HelperPID, cancel)
+	go watchParentProcess(state.ParentPID, cancel)
 	go watchStopCommand(cancel)
 
 	errCh := make(chan error, 2)
@@ -540,10 +545,14 @@ func watchStopCommand(cancel context.CancelFunc) {
 
 func watchParentProcess(pid uint32, cancel context.CancelFunc) {
 	if pid == 0 {
+		cancel()
 		return
 	}
 	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, pid)
 	if err != nil {
+		// Never leave system routes and DNS redirected when the GUI process
+		// cannot be monitored (for example, if its PID is already gone).
+		cancel()
 		return
 	}
 	go func() {
