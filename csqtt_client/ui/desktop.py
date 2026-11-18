@@ -1,7 +1,8 @@
 """Desktop pages, navigation, and connection feedback."""
 import ctypes
+import sys
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageDraw, ImageTk
 
 from csqtt_client.ui.theme import (
@@ -9,12 +10,14 @@ from csqtt_client.ui.theme import (
 )
 from csqtt_client.ui.styles import configure_style
 from csqtt_client.ui.widgets import Panel, ScrollPage, label, frame
+from csqtt_client.models.admin_txt import parse_admin_txt
 
 
 class DesktopUI:
     def __init__(self, app, root, profile, version, directory):
         self.app, self.root = app, root
         self.page = None
+        self.role = "admin"
         self.images = []
         self.entries = {}
         self.secret_buttons = {}
@@ -27,7 +30,8 @@ class DesktopUI:
             self.logo = source.convert("RGBA")
         self.window_icon = ImageTk.PhotoImage(self.logo.resize((256, 256), Image.Resampling.LANCZOS), master=root)
         root.iconphoto(True, self.window_icon)
-        root.iconbitmap(default=str(directory / "assets/icons/CSQTT.ico"))
+        if sys.platform == "win32":
+            root.iconbitmap(default=str(directory / "assets/icons/CSQTT.ico"))
         root.configure(bg=BG)
         root.title(f"CSQTT v{version}")
         scale = max(1, root.winfo_fpixels("1i") / 96)
@@ -121,6 +125,7 @@ class DesktopUI:
         self.settings_page()
         self.logs_page()
         self.show_page("connection")
+        self.apply_role("Администратор")
         previous_compact = None
         def resize_window(event):
             nonlocal previous_compact
@@ -152,6 +157,15 @@ class DesktopUI:
         brand.pack(side="left", padx=(0, 12))
         version_label = label(bar, f"v{version}", size=8, color=DIM)
         version_label.pack(side="left")
+        label(bar, "Роль", size=9, color=MUTED).pack(side="left", padx=(22, 7))
+        self.role_choice = tk.StringVar(value="Администратор")
+        role_box = ttk.Combobox(
+            bar, textvariable=self.role_choice,
+            values=("Администратор", "Клиент"),
+            state="readonly", width=16,
+        )
+        role_box.pack(side="left", pady=7)
+        role_box.bind("<<ComboboxSelected>>", self.change_role)
         drag_space = frame(bar)
         drag_space.pack(side="left", fill="both", expand=True)
         for widget in (bar, logo, brand, version_label, drag_space):
@@ -273,17 +287,56 @@ class DesktopUI:
         body.columnconfigure(1, weight=2, uniform="connection")
         server = self.section(body, "Сервер csqtt", "Данные подключения с вашего сервера.")
         server.grid(row=0, column=0, sticky="new", padx=(0, 14))
-        self.field(server.body, "Сервер · IP или домен и порт", "server")
-        self.field(server.body, "Пароль csqtt", "password", secret=True)
-        label(server.body, "Хеши VK или ссылки звонков", color=MUTED, size=9).pack(anchor="w", pady=(14, 5))
-        self.app.hashes = self.text(server.body, height=4)
+        self.admin_server_group = frame(server.body)
+        self.admin_server_group.pack(fill="x")
+        self.field(self.admin_server_group, "Сервер · IP или домен и порт", "server")
+        self.field(self.admin_server_group, "Пароль csqtt", "password", secret=True)
+        self.import_txt_button = ttk.Button(
+            self.admin_server_group, text="Загрузить настройки из TXT…",
+            command=self.import_admin_txt,
+        )
+        self.import_txt_button.pack(anchor="w", pady=(14, 0))
+
+        self.client_link_group = frame(server.body)
+        self.field(self.client_link_group, "Ссылка подключения csqtt://", "share_link", secret=True)
+        self.field(
+            self.client_link_group,
+            "Пароль CSQTT (если не указан в ссылке)",
+            "client_password",
+            secret=True,
+        )
+        label(
+            self.client_link_group,
+            "Ссылка должна быть скопирована целиком из панели CSQTT. Если в ней нет пароля — укажите его здесь.",
+            color=DIM, size=8, wraplength=520, justify="left",
+        ).pack(anchor="w", pady=(7, 2))
+        self.client_link_group.pack_forget()
+
+        self.hashes_group = frame(server.body)
+        self.hashes_group.pack(fill="x", pady=(14, 0))
+        label(
+            self.hashes_group,
+            "Хеши VK или ссылки звонков (если их нет в csqtt://)",
+            color=MUTED, size=9,
+        ).pack(anchor="w", pady=(0, 5))
+        self.app.hashes = self.text(self.hashes_group, height=4)
         self.app.hashes.surface.pack(fill="x")
         self.app.hashes.insert("1.0", profile.hashes)
-        label(server.body, "По одному на строку · до 6 хешей", color=DIM, size=8).pack(anchor="w", pady=(7, 2))
+        label(
+            self.hashes_group, "По одному на строку · до 6 хешей",
+            color=DIM, size=8,
+        ).pack(anchor="w", pady=(7, 2))
         side = frame(body)
         side.grid(row=0, column=1, sticky="new")
-        proxy = self.section(side, "Корпоративный прокси", "HTTP CONNECT · авторизация Basic")
-        proxy.pack(fill="x")
+        internet = self.section(side, "Доступ в интернет", "Прямое подключение через домашний Wi-Fi или мобильную сеть либо корпоративный HTTP-прокси.")
+        internet.pack(fill="x")
+        self.internet_choice = tk.StringVar(value="Напрямую (Wi-Fi / мобильный интернет)" if self.app.vars["internet_mode"].get() == "direct" else "Через HTTP-прокси")
+        internet_box = ttk.Combobox(internet.body, textvariable=self.internet_choice,
+                                    values=("Напрямую (Wi-Fi / мобильный интернет)", "Через HTTP-прокси"), state="readonly")
+        self.internet_box = internet_box
+        internet_box.pack(fill="x", pady=(8, 4))
+        proxy = self.section(side, "Параметры HTTP-прокси", "Нужны только при выборе соответствующего способа доступа.")
+        proxy.pack(fill="x", pady=(12, 0))
         self.field(proxy.body, "Адрес прокси · IP:порт", "proxy")
         self.field(proxy.body, "Логин", "proxy_user")
         self.field(proxy.body, "Пароль прокси", "proxy_password", secret=True)
@@ -293,6 +346,16 @@ class DesktopUI:
                                     wraplength=360, justify="left")
         self.proxy_feedback.pack(fill="x", pady=(10, 0))
         self.proxy_feedback.bind("<Configure>", lambda e: self.proxy_feedback.configure(wraplength=max(120, e.width)))
+        def update_internet_mode(_event=None):
+            direct = self.internet_choice.get().startswith("Напрямую")
+            self.app.vars["internet_mode"].set("direct" if direct else "proxy")
+            state = "disabled" if direct else "normal"
+            for key in ("proxy", "proxy_user", "proxy_password"):
+                self.entries[key].configure(state=state)
+            self.app.check_proxy_button.configure(state=state)
+        self.update_internet_mode = update_internet_mode
+        internet_box.bind("<<ComboboxSelected>>", update_internet_mode)
+        update_internet_mode()
         local = self.section(side, "Локальные прокси")
         local.pack(fill="x", pady=(14, 0))
         self.endpoints = {}
@@ -309,12 +372,86 @@ class DesktopUI:
         remember.grid(row=1, column=0, columnspan=2, sticky="w", pady=(12, 0))
         self.adapt_columns(body, server, side, "connection", remember)
 
+    def change_role(self, _event=None):
+        selected = self.role_choice.get()
+        if (self.app.core or self.app.helper) and not self.app.stopping:
+            messagebox.showwarning(
+                "Подключение активно",
+                "Отключите текущую сессию перед сменой роли.",
+                parent=self.root,
+            )
+            self.role_choice.set("Клиент" if self.role == "client" else "Администратор")
+            return
+        self.apply_role(selected)
+
+    def apply_role(self, selected):
+        self.role = "client" if selected == "Клиент" else "admin"
+        if self.role == "client":
+            self.admin_server_group.pack_forget()
+            self.client_link_group.pack(fill="x", before=self.hashes_group)
+        else:
+            self.client_link_group.pack_forget()
+            self.admin_server_group.pack(fill="x", before=self.hashes_group)
+
+    def import_admin_txt(self):
+        filename = filedialog.askopenfilename(
+            parent=self.root,
+            title="Загрузить конфигурацию администратора",
+            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
+        )
+        if not filename:
+            return
+        try:
+            from pathlib import Path
+            path = Path(filename)
+            try:
+                content = path.read_text(encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                content = path.read_text(encoding="cp1251")
+            values = parse_admin_txt(content)
+            for key in (
+                "server", "password", "proxy", "proxy_user",
+                "proxy_password", "internet_mode",
+            ):
+                if key in values:
+                    self.app.vars[key].set(values[key])
+            if "hashes" in values:
+                self.app.hashes.delete("1.0", "end")
+                self.app.hashes.insert("1.0", values["hashes"])
+            if "internet_mode" in values:
+                self.internet_choice.set(
+                    "Через HTTP-прокси"
+                    if values["internet_mode"] == "proxy"
+                    else "Напрямую (Wi-Fi / мобильный интернет)"
+                )
+                self.update_internet_mode()
+            messagebox.showinfo(
+                "Конфигурация загружена",
+                "Параметры TXT-файла внесены в поля администратора. Проверьте их перед подключением.",
+                parent=self.root,
+            )
+        except (OSError, UnicodeError, ValueError) as error:
+            messagebox.showerror("Ошибка TXT-конфигурации", str(error), parent=self.root)
+
     def settings_page(self):
         body = self.page_frame("settings")
         body.columnconfigure(0, weight=1, uniform="settings")
         body.columnconfigure(1, weight=1, uniform="settings")
         transport = self.section(body, "Параметры туннеля", "Режимы должны соответствовать настройкам сервера.")
         transport.grid(row=0, column=0, sticky="new", padx=(0, 14))
+        label(transport.body, "Режим подключения", size=9, color=MUTED).pack(anchor="w", pady=(8, 5))
+        mode_choice = tk.StringVar(value="TUN" if self.app.vars["mode"].get() == "tun" else "Прокси")
+        mode_box = ttk.Combobox(transport.body, textvariable=mode_choice,
+                                values=("Прокси", "TUN"), state="readonly")
+        mode_box.pack(fill="x")
+        mode_box.bind("<<ComboboxSelected>>", lambda _event: self.app.vars["mode"].set(
+            "tun" if mode_choice.get() == "TUN" else "proxy"))
+        tun_help = (
+            "Прокси — SOCKS5/HTTP для выбранных приложений. TUN — системный IPv4 через Linux /dev/net/tun; при подключении потребуется подтверждение polkit и systemd-resolved. IPv6 пока не перенаправляется."
+            if sys.platform == "linux" else
+            "Прокси — SOCKS5/HTTP для выбранных приложений. TUN — системный IPv4 через Wintun; нужен запуск от имени администратора. IPv6 пока не перенаправляется."
+        )
+        label(transport.body, tun_help, color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(7, 4))
         self.field(transport.body, "Потоки · workers", "workers")
         for title, key, values in (("Обфускация", "obfs", ("unified", "audio", "video")),
                                    ("SRTP", "srtp", ("auto", "wrap", "dtls"))):

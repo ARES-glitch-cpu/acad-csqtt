@@ -1,5 +1,7 @@
 """Desktop controller: UI events and the connection process lifecycle."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
+import ctypes
+import os
 import http.client
 import ipaddress
 import json
@@ -10,13 +12,20 @@ import socket
 import ssl
 import subprocess
 import threading
+import shutil
+import sys
+import uuid
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW
+from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW, CORE_FILENAME, HELPER_FILENAME
 from csqtt_client.models.profile import Profile
-from csqtt_client.platform.windows.profiles import load_profile, save_profile, delete_profile, profile_exists
+from csqtt_client.models.share_link import parse_csqtt_link
+if os.name == "nt":
+    from csqtt_client.platform.windows.profiles import load_profile, save_profile, delete_profile, profile_exists
+else:
+    from csqtt_client.platform.linux.profiles import load_profile, save_profile, delete_profile, profile_exists
 from csqtt_client.services.proxy import proxy_connect
 from csqtt_client.services.tunnel import core_command
 
@@ -34,6 +43,9 @@ class App:
         self.closing = False
         self.stopping = False
         self.tray = None
+        self.tun_recovery_error = None
+        self.tun_uds = None
+        self.tun_bypass_ips = []
         try:
             profile = load_profile()
         except Exception:
@@ -53,10 +65,31 @@ class App:
         self.log_menu.add_command(label="Скопировать весь журнал", command=self.copy_log)
         self.log_menu.add_command(label="Выделить всё", command=self.select_log)
         self.log.bind("<Button-3>", self.show_log_menu)
-        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
+        self.recover_tun_state()
+        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray if os.name == "nt" else self.close)
         root.bind("<Unmap>", self.on_minimize)
         root.bind("<Destroy>", self.on_destroy, add="+")
         root.after(100, self.poll)
+
+    def recover_tun_state(self):
+        """Remove stale TUN routes left by an interrupted previous run."""
+        helper = ROOT / "bin" / HELPER_FILENAME
+        if os.name != "nt" or not helper.exists():
+            return
+        try:
+            result = subprocess.run(
+                [str(helper), "--recover-tun"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=20, creationflags=NO_WINDOW,
+            )
+            output = (result.stdout or result.stderr or "").strip()
+            if result.returncode:
+                self.tun_recovery_error = output or f"Код {result.returncode}"
+                self.append("Не удалось восстановить сетевые настройки после предыдущего TUN-сеанса: " + self.tun_recovery_error)
+            elif "TUN_RECOVERED" in output:
+                self.append("Восстановлены маршруты и DNS после прерванного TUN-сеанса.")
+        except Exception as error:
+            self.tun_recovery_error = str(error)
+            self.append(f"Проверка аварийного восстановления TUN не выполнена: {error}")
 
     def start_tray(self):
         from csqtt_client.platform.windows.tray import TrayIcon
@@ -73,7 +106,7 @@ class App:
             self.close()
 
     def on_minimize(self, event):
-        if event.widget is self.root and self.root.state() == "iconic":
+        if os.name == "nt" and event.widget is self.root and self.root.state() == "iconic":
             self.hide_to_tray()
 
     def show_window(self):
@@ -152,6 +185,9 @@ class App:
 
     def check_proxy(self):
         profile = self.profile()
+        if profile.internet_mode != "proxy":
+            self.ui.show_proxy_result("error", "Выбран прямой режим. HTTP-прокси не используется.")
+            return
         self.check_proxy_button.configure(state="disabled")
         self.ui.show_proxy_result("checking", "Проверяю прокси…")
         def work():
@@ -169,26 +205,52 @@ class App:
     def start(self):
         try:
             profile = self.profile()
+            # Persist the form as entered. The parsed server password belongs
+            # to this active session and must not overwrite the admin form.
+            profile_to_save = profile
+            if self.ui.role == "client":
+                share = parse_csqtt_link(self.vars["share_link"].get())
+                server_password = share.password or profile.client_password
+                if not server_password:
+                    raise ValueError(
+                        "В ссылке нет пароля CSQTT. Введите его в поле ниже или попросите администратора выдать ссылку с паролем."
+                    )
+                profile = replace(
+                    profile,
+                    server=share.server,
+                    password=server_password,
+                    hashes="\n".join(share.hashes) if share.hashes else profile.hashes,
+                )
             hashes = profile.validate()
-            if not (ROOT / "bin" / "csqtt-core.exe").exists() or not (ROOT / "bin" / "packet-proxy.exe").exists():
-                raise ValueError("Не найдены bin/csqtt-core.exe и bin/packet-proxy.exe. Распакуйте portable целиком.")
-            # Check listener conflicts before establishing a tunnel.
-            for port in (profile.socks_port, profile.http_port):
-                with socket.socket() as check:
-                    check.bind(("127.0.0.1", int(port)))
+            if not (ROOT / "bin" / CORE_FILENAME).exists() or not (ROOT / "bin" / HELPER_FILENAME).exists():
+                raise ValueError(f"Не найдены bin/{CORE_FILENAME} и bin/{HELPER_FILENAME}. Распакуйте portable целиком.")
+            if profile.mode == "tun":
+                if self.tun_recovery_error:
+                    raise ValueError("Сначала восстановите сетевые настройки Windows: " + self.tun_recovery_error)
+                if os.name == "nt" and not ctypes.windll.shell32.IsUserAnAdmin():
+                    raise ValueError("Режим TUN требует прав администратора. Закройте CSQTT и запустите его через «Запуск от имени администратора». Режим Proxy работает без повышения прав.")
+                if sys.platform == "linux" and os.geteuid() != 0 and not shutil.which("pkexec"):
+                    raise ValueError("Для Linux TUN установите polkit (команда pkexec) и запустите приложение из графического сеанса.")
+            else:
+                # Check listener conflicts before establishing local proxies.
+                for port in (profile.socks_port, profile.http_port):
+                    with socket.socket() as check:
+                        check.bind(("127.0.0.1", int(port)))
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as check:
                 check.bind(("127.0.0.1", 0))
                 self.packet_port = check.getsockname()[1]
-            args, env = core_command(profile, self.packet_port)
+            self.tun_uds = f"csqtt-{uuid.uuid4().hex}" if profile.mode == "tun" and sys.platform == "linux" else None
+            args, env = core_command(profile, self.packet_port, self.tun_uds)
             if self.remember.get():
-                save_profile(profile)
+                save_profile(profile_to_save)
             else:
                 delete_profile()
             self.session += 1
             self.ready = False
             self.config = None
             self.running_profile = profile
-            self.secrets = sorted([profile.password, profile.proxy_password, profile.salt, *hashes, *(h[:8] for h in hashes)], key=len, reverse=True)
+            self.tun_bypass_ips = []
+            self.secrets = sorted([profile.password, profile.client_password, profile.proxy_password, profile.salt, profile.share_link, *hashes, *(h[:8] for h in hashes)], key=len, reverse=True)
             self.core = subprocess.Popen(args, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
             self.read_process(self.core, "core", self.session)
@@ -199,7 +261,9 @@ class App:
             self.download_total.set("0.00")
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
-            self.append(f"Запущено ядро: TCP через HTTP CONNECT, TURN :443. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
+            mode_text = ("системный TUN (Linux /dev/net/tun)" if sys.platform == "linux" else "системный TUN (Wintun)") if profile.mode == "tun" else "локальные SOCKS5/HTTP-прокси"
+            internet_text = "прямое TCP-подключение через интернет" if profile.internet_mode == "direct" else "через корпоративный HTTP CONNECT"
+            self.append(f"Запущено ядро: {internet_text}; TURN :443; режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
         except Exception as error:
             self.ui.show_page("connection")
             messagebox.showerror("Не удалось начать подключение", str(error))
@@ -216,19 +280,61 @@ class App:
             return
         profile = self.running_profile
         ip, dns = self.config
-        args = [str(ROOT / "bin" / "packet-proxy.exe"), "--core", f"127.0.0.1:{self.packet_port}",
-                "--ip", ip, "--dns", dns, "--socks", f"127.0.0.1:{profile.socks_port}", "--http", f"127.0.0.1:{profile.http_port}"]
+        args = [str(ROOT / "bin" / HELPER_FILENAME), "--mode", profile.mode,
+                "--core", f"127.0.0.1:{self.packet_port}", "--ip", ip, "--dns", dns]
+        if profile.mode == "tun":
+            if profile.internet_mode == "proxy":
+                bypass_ips = [profile.proxy.rsplit(":", 1)[0]]
+            else:
+                bypass_ips = list(self.tun_bypass_ips)
+                if profile.turn.strip():
+                    try:
+                        for result in socket.getaddrinfo(profile.turn.strip(), 443, socket.AF_INET, socket.SOCK_STREAM):
+                            address = result[4][0]
+                            if address not in bypass_ips:
+                                bypass_ips.append(address)
+                    except OSError as error:
+                        self.append(f"Не удалось разрешить TURN-хост для обходного маршрута: {error}")
+                if not bypass_ips:
+                    self.append("Не получены адреса TURN для обходного маршрута. TUN не запускаю, чтобы не зациклить соединение.")
+                    self.stop()
+                    return
+            args += ["--bypass-ip", ",".join(bypass_ips)]
+            # The native helper must watch the GUI process on every OS.
+            # Linux additionally receives the TUN file descriptor over UDS.
+            args += ["--parent-pid", str(os.getpid())]
+            if self.tun_uds:
+                args += ["--tun-uds", self.tun_uds]
+            if sys.platform == "linux" and os.geteuid() != 0:
+                args.insert(0, shutil.which("pkexec"))
+        else:
+            args += ["--socks", f"127.0.0.1:{profile.socks_port}",
+                     "--http", f"127.0.0.1:{profile.http_port}"]
         try:
-            self.helper = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                           text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+            self.helper = subprocess.Popen(args, stdin=subprocess.PIPE if profile.mode == "tun" else None,
+                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                           encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
             self.read_process(self.helper, "helper", self.session)
         except Exception as error:
             self.append(f"Не запущен локальный прокси: {error}")
             self.stop()
 
     def process_line(self, kind, line):
-        if kind == "helper" and line.startswith("PROXY_READY"):
-            self.status.set("Туннель готов, локальные прокси запущены. Проверяю интернет…")
+        if kind == "core" and line.startswith("TUN_BYPASS:"):
+            try:
+                address = str(ipaddress.IPv4Address(line.split(":", 1)[1].strip()))
+                if address not in self.tun_bypass_ips:
+                    self.tun_bypass_ips.append(address)
+            except ValueError:
+                self.append("Пропущен некорректный адрес TURN для обходного маршрута TUN.")
+            return
+        if kind == "helper" and (line.startswith("PROXY_READY") or line.startswith("TUN_READY")):
+            if line.startswith("TUN_READY"):
+                self.status.set("Системный TUN поднят. Проверяю доступ в интернет…")
+                description = "Linux /dev/net/tun" if sys.platform == "linux" else "Wintun"
+                self.append(f"{description} и системные маршруты настроены; внешний транспорт CSQTT исключён из TUN.")
+            else:
+                self.status.set("Туннель готов, локальные прокси запущены. Проверяю интернет…")
             self.ui.set_state("checking")
             self.test_button.configure(state="normal")
             self.check_internet()
@@ -273,10 +379,15 @@ class App:
             conn = None
             succeeded = False
             try:
-                # Explicit CONNECT to the LOCAL proxy, unaffected by proxy environment variables.
-                conn = http.client.HTTPSConnection("127.0.0.1", int(profile.http_port), timeout=25, context=ssl.create_default_context())
-                conn.set_tunnel("api.ipify.org", 443)
-                conn.request("GET", "/", headers={"Host": "api.ipify.org", "Connection": "close"})
+                if profile.mode == "tun":
+                    # The Windows /1 routes direct this request through Wintun.
+                    conn = http.client.HTTPSConnection("api.ipify.org", 443, timeout=25, context=ssl.create_default_context())
+                    conn.request("GET", "/", headers={"Host": "api.ipify.org", "Connection": "close"})
+                else:
+                    # Explicit CONNECT to the LOCAL proxy, unaffected by proxy environment variables.
+                    conn = http.client.HTTPSConnection("127.0.0.1", int(profile.http_port), timeout=25, context=ssl.create_default_context())
+                    conn.set_tunnel("api.ipify.org", 443)
+                    conn.request("GET", "/", headers={"Host": "api.ipify.org", "Connection": "close"})
                 response = conn.getresponse()
                 if response.status != 200:
                     raise ValueError(f"Проверка IP вернула HTTP {response.status}")
@@ -284,7 +395,7 @@ class App:
                 result = f"Интернет через csqtt работает. Внешний IP: {address}"
                 succeeded = True
             except Exception:
-                result = "Локальные прокси запущены, но интернет не подтверждён. Проверьте журнал и параметры сервера."
+                result = "Туннель запущен, но интернет не подтверждён. Проверьте журнал, DNS и параметры сервера." if profile.mode == "tun" else "Локальные прокси запущены, но интернет не подтверждён. Проверьте журнал и параметры сервера."
             finally:
                 if conn:
                     conn.close()
@@ -308,7 +419,7 @@ class App:
         def cleanup():
             for process in processes:
                 try:
-                    process.wait(timeout=3)
+                    process.wait(timeout=8 if process.stdin else 3)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()

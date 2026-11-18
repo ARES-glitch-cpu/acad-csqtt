@@ -1,0 +1,15 @@
+# CSQTT administrator profile
+# Use UTF-8. Replace placeholder values with actual credentials.
+# You may specify server/proxy as host:port or split host and port.
+
+server=csqtt.example.net:46000
+server_password=CHANGE_ME_SERVER_PASSWORD
+
+# Repeat call= for each VK call hash or call URL (1 to 6 supported).
+call=https://vk.com/call/join/REPLACE_WITH_CALL_HASH
+
+# Corporate HTTP proxy (optional). When proxy is present, proxy mode is selected.
+proxy=192.0.2.10:3128
+proxy_login=CHANGE_ME_PROXY_LOGIN
+proxy_password=CHANGE_ME_PROXY_PASSWORD
+internet_mode=proxy

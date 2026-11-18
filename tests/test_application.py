@@ -22,7 +22,7 @@ class ClientTests(unittest.TestCase):
                            hashes="testhash123456", proxy_user="proxy-test-user", proxy_password="proxy-test-secret")
 
     def test_tcp_proxy_command_and_secret_environment(self):
-        profile = self.profile()
+        profile = replace(self.profile(), internet_mode="proxy")
         args, env = app.core_command(profile, 9000)
         self.assertEqual(args[args.index("--turn-transport") + 1], "tcp")
         self.assertEqual(args[args.index("--port") + 1], "443")
@@ -32,10 +32,22 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(env["CSQTT_PROXY_PASSWORD"], profile.proxy_password)
         self.assertNotIn("NO_PROXY", env)
 
+    def test_direct_mode_omits_corporate_proxy_environment(self):
+        profile = self.profile()
+        args, env = app.core_command(profile, 9000)
+        self.assertEqual(args[args.index("--turn-transport") + 1], "tcp")
+        self.assertNotIn("CSQTT_HTTP_PROXY", env)
+        self.assertNotIn("CSQTT_PROXY_USER", env)
+        self.assertNotIn("CSQTT_PROXY_PASSWORD", env)
+
     def test_hash_normalization_and_validation(self):
         self.assertEqual(normalize_hashes("https://vk.com/call/join/abc123?x=1\nabc123;def456"), ["abc123", "def456"])
+        tun_profile = replace(self.profile(), mode="tun", internet_mode="proxy")
+        self.assertEqual(tun_profile.validate(), ["testhash123456"])
+        with self.assertRaisesRegex(ValueError, "IPv4-адрес"):
+            replace(tun_profile, proxy="[2001:db8::1]:3128").validate()
         for profile in [replace(self.profile(), hashes=""), replace(self.profile(), socks_port="8080"),
-                        replace(self.profile(), workers="0"), replace(self.profile(), proxy="proxy.invalid:3128"),
+                        replace(self.profile(), workers="0"), replace(self.profile(), internet_mode="proxy", proxy="proxy.invalid:3128"),
                         replace(self.profile(), turn="turn:example.com:443"), replace(self.profile(), password="")]:
             with self.assertRaises(ValueError):
                 profile.validate()
@@ -85,7 +97,7 @@ class ClientTests(unittest.TestCase):
 
     def test_authenticated_connect(self):
         address, captured, thread = self.fake_proxy("200 Connection established")
-        profile = replace(self.profile(), proxy=address)
+        profile = replace(self.profile(), internet_mode="proxy", proxy=address)
         app.proxy_connect(profile, "turn.example:443")
         thread.join(timeout=3)
         expected = base64.b64encode(f"{profile.proxy_user}:{profile.proxy_password}".encode())
@@ -95,7 +107,7 @@ class ClientTests(unittest.TestCase):
     def test_proxy_auth_failure(self):
         address, captured, thread = self.fake_proxy("407 Proxy Authentication Required")
         with self.assertRaisesRegex(ValueError, "407"):
-            app.proxy_connect(replace(self.profile(), proxy=address), "turn.example:443")
+            app.proxy_connect(replace(self.profile(), internet_mode="proxy", proxy=address), "turn.example:443")
         thread.join(timeout=3)
 
     @unittest.skipUnless((app.ROOT / "bin/csqtt-core.exe").exists(), "Build the Windows core first")
