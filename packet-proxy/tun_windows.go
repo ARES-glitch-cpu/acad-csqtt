@@ -520,13 +520,17 @@ func cleanupTunState(state tunRecoveryState, path string) error {
 			state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
 	}
 	if state.InterfaceName != "" {
-		if err := runNetsh("interface", "ipv4", "set", "dnsservers",
-			"name="+state.InterfaceName, "source=dhcp"); err != nil {
-			problems = append(problems, "восстановление DNS адаптера: "+err.Error())
-		}
-		if err := runNetsh("interface", "ipv4", "set", "address",
-			"name="+state.InterfaceName, "source=dhcp"); err != nil {
-			problems = append(problems, "сброс адреса адаптера: "+err.Error())
+		// A removed Wintun adapter has no remaining address or DNS settings
+		// to restore. Avoid keeping an unrecoverable journal for that case.
+		if _, ifaceErr := net.InterfaceByName(state.InterfaceName); ifaceErr == nil {
+			if err := runNetsh("interface", "ipv4", "set", "dnsservers",
+				"name="+state.InterfaceName, "source=dhcp"); err != nil {
+				problems = append(problems, "восстановление DNS адаптера: "+err.Error())
+			}
+			if err := runNetsh("interface", "ipv4", "set", "address",
+				"name="+state.InterfaceName, "source=dhcp"); err != nil {
+				problems = append(problems, "сброс адреса адаптера: "+err.Error())
+			}
 		}
 	}
 
