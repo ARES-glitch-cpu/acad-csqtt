@@ -53,7 +53,7 @@ class ShareLinkTests(unittest.TestCase):
     def test_bad_link_does_not_echo_secret(self):
         secret = "not-a-real-secret"
         with self.assertRaises(ValueError) as error:
-            parse_csqtt_link("csqtt://connect?v=2&host=bad&password=" + secret)
+            parse_csqtt_link("csqtt://connect?v=2&host=bad&password=" + secret + "&password=second")
         self.assertNotIn(secret, str(error.exception))
 
 
