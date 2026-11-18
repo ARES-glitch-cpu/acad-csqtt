@@ -30,12 +30,20 @@ const (
 	iffNoPI      = 0x1000
 )
 
+type linuxBypassRoute struct {
+	IP      string `json:"ip"`
+	Device  string `json:"device"`
+	Gateway string `json:"gateway"`
+	Add     bool   `json:"add"`
+}
+
 type linuxTunState struct {
-	InterfaceName string   `json:"interface_name"`
-	ProxyIP       string   `json:"proxy_ip"`
-	DNSIPs        []string `json:"dns_ips"`
-	ProxyRoute    bool     `json:"proxy_route"`
-	HelperPID     int      `json:"helper_pid"`
+	InterfaceName string             `json:"interface_name"`
+	ProxyIP       string             `json:"proxy_ip,omitempty"`
+	DNSIPs        []string           `json:"dns_ips"`
+	ProxyRoute    bool               `json:"proxy_route,omitempty"`
+	BypassRoutes  []linuxBypassRoute `json:"bypass_routes,omitempty"`
+	HelperPID     int                `json:"helper_pid"`
 }
 
 type linuxPhysicalRoute struct {
@@ -78,23 +86,40 @@ func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error
 	if err != nil || !tunIP.Is4() {
 		return errors.New("--ip must be the IPv4 address supplied by TUNCONF")
 	}
-	proxyIP, err := netip.ParseAddr(bypassIP)
-	if err != nil || !proxyIP.Is4() {
-		return errors.New("--bypass-ip must be the IPv4 address of the corporate HTTP proxy")
+	bypassIPs, err := parseLinuxBypassIPs(bypassIP)
+	if err != nil {
+		return err
 	}
 	dnsServers, err := parseLinuxDNSServers(dns)
 	if err != nil {
 		return err
 	}
-	physical, err := findLinuxPhysicalRoute(proxyIP)
-	if err != nil {
-		return fmt.Errorf("cannot determine the physical route to corporate proxy %s: %w", proxyIP, err)
-	}
-	if physical.Device == linuxTunName || physical.Device == "lo" {
-		return fmt.Errorf("corporate proxy %s must be reachable through a physical interface, got %s", proxyIP, physical.Device)
+	bypassRoutes := make([]linuxBypassRoute, 0, len(bypassIPs))
+	for _, address := range bypassIPs {
+		physical, routeErr := findLinuxPhysicalRoute(address)
+		if routeErr != nil {
+			return fmt.Errorf("cannot determine physical route to server %s: %w", address, routeErr)
+		}
+		if physical.Device == linuxTunName || physical.Device == "lo" {
+			return fmt.Errorf("server %s must be reachable through a physical interface, got %s", address, physical.Device)
+		}
+		bypassRoutes = append(bypassRoutes, linuxBypassRoute{
+			IP: address.String(), Device: physical.Device, Gateway: physical.Gateway,
+			Add: true,
+		})
 	}
 
-	for _, prefix := range []string{proxyIP.String() + "/32", "0.0.0.0/1", "128.0.0.0/1"} {
+	for _, route := range bypassRoutes {
+		prefix := route.IP + "/32"
+		exists, err := exactLinuxRoutePrefixExists(prefix)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("route %s already exists; refusing to overwrite an existing system route", prefix)
+		}
+	}
+	for _, prefix := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
 		exists, err := exactLinuxRoutePrefixExists(prefix)
 		if err != nil {
 			return err
@@ -104,7 +129,7 @@ func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error
 		}
 	}
 	for _, server := range dnsServers {
-		if server == proxyIP {
+		if linuxBypassContains(bypassIPs, server) {
 			continue
 		}
 		exists, err := exactLinuxRoutePrefixExists(server.String() + "/32")
@@ -127,9 +152,8 @@ func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error
 
 	state := linuxTunState{
 		InterfaceName: ifName,
-		ProxyIP:       proxyIP.String(),
-		ProxyRoute:    true,
-		HelperPID:     os.Getpid(),
+		BypassRoutes: bypassRoutes,
+		HelperPID: os.Getpid(),
 	}
 	for _, server := range dnsServers {
 		if server != proxyIP {
@@ -156,17 +180,22 @@ func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error
 		return fmt.Errorf("cannot bring the TUN interface up: %w", err)
 	}
 
-	proxyRoute := []string{"route", "add", proxyIP.String() + "/32"}
-	if physical.Gateway != "" {
-		proxyRoute = append(proxyRoute, "via", physical.Gateway)
-	}
-	proxyRoute = append(proxyRoute, "dev", physical.Device)
-	if err := runIP(proxyRoute...); err != nil {
-		return fmt.Errorf("cannot pin the corporate proxy route to the physical interface: %w", err)
+	for _, route := range bypassRoutes {
+		if !route.Add {
+			continue
+		}
+		args := []string{"route", "add", route.IP + "/32"}
+		if route.Gateway != "" {
+			args = append(args, "via", route.Gateway)
+		}
+		args = append(args, "dev", route.Device)
+		if err := runIP(args...); err != nil {
+			return fmt.Errorf("cannot pin server route %s to physical interface %s: %w", route.IP, route.Device, err)
+		}
 	}
 
 	for _, server := range dnsServers {
-		if server == proxyIP {
+		if linuxBypassContains(bypassIPs, server) {
 			continue
 		}
 		if err := runIP("route", "add", server.String()+"/32", "dev", ifName); err != nil {
@@ -247,7 +276,7 @@ func createLinuxTun(name string) (*os.File, string, error) {
 }
 
 func sendLinuxTunFD(name string, device *os.File) error {
-	address := &net.UnixAddr{Name: "\x00" + name, Net: "unix"}
+	address := &net.UnixAddr{Name: "@" + name, Net: "unix"}
 	deadline := time.Now().Add(30 * time.Second)
 	var lastErr error
 	for time.Now().Before(deadline) {
@@ -275,6 +304,31 @@ func sendLinuxTunFD(name string, device *os.File) error {
 		time.Sleep(150 * time.Millisecond)
 	}
 	return fmt.Errorf("Unix FD socket %q did not accept the TUN device within 30 seconds: %w", name, lastErr)
+}
+
+func parseLinuxBypassIPs(value string) ([]netip.Addr, error) {
+	seen := map[netip.Addr]bool{}
+	var result []netip.Addr
+	for _, item := range strings.Split(value, ",") {
+		address, err := netip.ParseAddr(strings.TrimSpace(item))
+		if err == nil && address.Is4() && !seen[address] {
+			seen[address] = true
+			result = append(result, address)
+		}
+	}
+	if len(result) == 0 {
+		return nil, errors.New("--bypass-ip must contain at least one TURN server or HTTP proxy IPv4 address")
+	}
+	return result, nil
+}
+
+func linuxBypassContains(addresses []netip.Addr, value netip.Addr) bool {
+	for _, address := range addresses {
+		if address == value {
+			return true
+		}
+	}
+	return false
 }
 
 func parseLinuxDNSServers(value string) ([]netip.Addr, error) {
@@ -423,7 +477,14 @@ func cleanupLinuxTun(state linuxTunState, path string) error {
 	for _, server := range state.DNSIPs {
 		_ = exec.Command("ip", "route", "del", server+"/32", "dev", state.InterfaceName).Run()
 	}
-	if state.ProxyRoute && state.ProxyIP != "" {
+	if len(state.BypassRoutes) > 0 {
+		for _, route := range state.BypassRoutes {
+			if route.Add {
+				_ = exec.Command("ip", "route", "del", route.IP+"/32").Run()
+			}
+		}
+	} else if state.ProxyRoute && state.ProxyIP != "" {
+		// Backward-compatible cleanup for old recovery state files.
 		_ = exec.Command("ip", "route", "del", state.ProxyIP+"/32").Run()
 	}
 	if state.InterfaceName != "" {
