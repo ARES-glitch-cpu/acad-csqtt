@@ -126,8 +126,12 @@ def _parse_connect(query: str) -> ShareLink:
     if "token" in raw and decoded.get("token"):
         raise ValueError("Ссылка содержит VK-токен сервера. Этот режим пока не поддерживается; запросите ссылку с хешами звонков.")
     password = decoded.get("password", "")
+    if "password" in raw and not password:
+        raise ValueError("В ссылке CSQTT указан пустой пароль.")
     if any(char.isspace() for char in password) or "|" in password:
         raise ValueError("Пароль в ссылке CSQTT содержит недопустимые символы.")
+    if "token" in raw and not decoded.get("token"):
+        raise ValueError("В ссылке CSQTT указан пустой VK-токен.")
 
     server = _format_server(host, port_text)
     hashes: list[str] = []
@@ -136,7 +140,11 @@ def _parse_connect(query: str) -> ShareLink:
             raise ValueError("В ссылке CSQTT указан пустой список звонков.")
         for item in raw["hashes"].split("+"):
             decoded_hash = _decode_value("hashes", item)
+            if any(char.isspace() for char in decoded_hash):
+                raise ValueError("Хеш звонка в ссылке CSQTT содержит пробел.")
             for candidate in normalize_hashes(decoded_hash):
+                if len(candidate) < 16:
+                    raise ValueError("Хеш звонка в ссылке CSQTT слишком короткий.")
                 if candidate not in hashes:
                     hashes.append(candidate)
         if not hashes:
