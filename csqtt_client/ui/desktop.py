@@ -28,7 +28,8 @@ class DesktopUI:
             self.logo = source.convert("RGBA")
         self.window_icon = ImageTk.PhotoImage(self.logo.resize((256, 256), Image.Resampling.LANCZOS), master=root)
         root.iconphoto(True, self.window_icon)
-        root.iconbitmap(default=str(directory / "assets/icons/CSQTT.ico"))
+        if sys.platform == "win32":
+            root.iconbitmap(default=str(directory / "assets/icons/CSQTT.ico"))
         root.configure(bg=BG)
         root.title(f"CSQTT v{version}")
         scale = max(1, root.winfo_fpixels("1i") / 96)
