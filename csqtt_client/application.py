@@ -44,6 +44,7 @@ class App:
         self.tray = None
         self.tun_recovery_error = None
         self.tun_uds = None
+        self.tun_bypass_ips = []
         try:
             profile = load_profile()
         except Exception:
@@ -183,6 +184,9 @@ class App:
 
     def check_proxy(self):
         profile = self.profile()
+        if profile.internet_mode != "proxy":
+            self.ui.show_proxy_result("error", "Выбран прямой режим. HTTP-прокси не используется.")
+            return
         self.check_proxy_button.configure(state="disabled")
         self.ui.show_proxy_result("checking", "Проверяю прокси…")
         def work():
@@ -228,6 +232,7 @@ class App:
             self.ready = False
             self.config = None
             self.running_profile = profile
+            self.tun_bypass_ips = []
             self.secrets = sorted([profile.password, profile.proxy_password, profile.salt, *hashes, *(h[:8] for h in hashes)], key=len, reverse=True)
             self.core = subprocess.Popen(args, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
@@ -240,7 +245,8 @@ class App:
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
             mode_text = ("системный TUN (Linux /dev/net/tun)" if sys.platform == "linux" else "системный TUN (Wintun)") if profile.mode == "tun" else "локальные SOCKS5/HTTP-прокси"
-            self.append(f"Запущено ядро: TCP через HTTP CONNECT, TURN :443; режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
+            internet_text = "прямое TCP-подключение через интернет" if profile.internet_mode == "direct" else "через корпоративный HTTP CONNECT"
+            self.append(f"Запущено ядро: {internet_text}; TURN :443; режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
         except Exception as error:
             self.ui.show_page("connection")
             messagebox.showerror("Не удалось начать подключение", str(error))
@@ -260,8 +266,23 @@ class App:
         args = [str(ROOT / "bin" / HELPER_FILENAME), "--mode", profile.mode,
                 "--core", f"127.0.0.1:{self.packet_port}", "--ip", ip, "--dns", dns]
         if profile.mode == "tun":
-            proxy_host, _ = profile.proxy.rsplit(":", 1)
-            args += ["--bypass-ip", proxy_host]
+            if profile.internet_mode == "proxy":
+                bypass_ips = [profile.proxy.rsplit(":", 1)[0]]
+            else:
+                bypass_ips = list(self.tun_bypass_ips)
+                if profile.turn.strip():
+                    try:
+                        for result in socket.getaddrinfo(profile.turn.strip(), 443, socket.AF_INET, socket.SOCK_STREAM):
+                            address = result[4][0]
+                            if address not in bypass_ips:
+                                bypass_ips.append(address)
+                    except OSError as error:
+                        self.append(f"Не удалось разрешить TURN-хост для обходного маршрута: {error}")
+                if not bypass_ips:
+                    self.append("Не получены адреса TURN для обходного маршрута. TUN не запускаю, чтобы не зациклить соединение.")
+                    self.stop()
+                    return
+            args += ["--bypass-ip", ",".join(bypass_ips)]
             if self.tun_uds:
                 args += ["--tun-uds", self.tun_uds, "--parent-pid", str(os.getpid())]
             if sys.platform == "linux" and os.geteuid() != 0:
@@ -279,6 +300,14 @@ class App:
             self.stop()
 
     def process_line(self, kind, line):
+        if kind == "core" and line.startswith("TUN_BYPASS:"):
+            try:
+                address = str(ipaddress.IPv4Address(line.split(":", 1)[1].strip()))
+                if address not in self.tun_bypass_ips:
+                    self.tun_bypass_ips.append(address)
+            except ValueError:
+                self.append("Пропущен некорректный адрес TURN для обходного маршрута TUN.")
+            return
         if kind == "helper" and (line.startswith("PROXY_READY") or line.startswith("TUN_READY")):
             if line.startswith("TUN_READY"):
                 self.status.set("Системный TUN поднят. Проверяю доступ в интернет…")
