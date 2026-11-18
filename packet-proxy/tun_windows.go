@@ -493,35 +493,45 @@ func processIsRunning(pid uint32) bool {
 
 func cleanupTunState(state tunRecoveryState, path string) error {
 	var problems []string
-	if state.InterfaceIndex > 0 {
-		_ = runRoute("DELETE", "0.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
-		_ = runRoute("DELETE", "128.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
+	delete := func(description string, args ...string) {
+		if err := deleteTunRoute(args...); err != nil {
+			problems = append(problems, description+": "+err.Error())
+		}
 	}
+
 	if state.InterfaceIndex > 0 {
+		iface := strconv.Itoa(state.InterfaceIndex)
+		delete("маршрут 0.0.0.0/1", "0.0.0.0", "MASK", "128.0.0.0", "IF", iface)
+		delete("маршрут 128.0.0.0/1", "128.0.0.0", "MASK", "128.0.0.0", "IF", iface)
 		for _, server := range state.DNSIPs {
-			_ = runRoute("DELETE", server, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.InterfaceIndex))
+			delete("DNS-маршрут "+server, server, "MASK", "255.255.255.255", "IF", iface)
 		}
 	}
 	if len(state.BypassRoutes) > 0 {
 		for _, route := range state.BypassRoutes {
 			if route.AddRoute && route.InterfaceIndex > 0 {
-				_ = runRoute("DELETE", route.IP, "MASK", "255.255.255.255", "IF", strconv.Itoa(route.InterfaceIndex))
+				delete("обходной маршрут "+route.IP,
+					route.IP, "MASK", "255.255.255.255", "IF", strconv.Itoa(route.InterfaceIndex))
 			}
 		}
 	} else if state.AddProxyRoute && state.ProxyIP != "" && state.ProxyInterfaceIndex > 0 {
 		// Backward-compatible cleanup for an older recovery state file.
-		_ = runRoute("DELETE", state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
+		delete("маршрут прокси "+state.ProxyIP,
+			state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
 	}
 	if state.InterfaceName != "" {
 		if err := runNetsh("interface", "ipv4", "set", "dnsservers",
 			"name="+state.InterfaceName, "source=dhcp"); err != nil {
-			problems = append(problems, err.Error())
+			problems = append(problems, "восстановление DNS адаптера: "+err.Error())
 		}
 		if err := runNetsh("interface", "ipv4", "set", "address",
 			"name="+state.InterfaceName, "source=dhcp"); err != nil {
-			problems = append(problems, err.Error())
+			problems = append(problems, "сброс адреса адаптера: "+err.Error())
 		}
 	}
+
+	// Keep the recovery journal until every cleanup step succeeds. The next
+	// launch can retry rather than silently accepting stale system routes.
 	if len(problems) == 0 {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			problems = append(problems, err.Error())
@@ -531,6 +541,27 @@ func cleanupTunState(state tunRecoveryState, path string) error {
 		return errors.New(strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// deleteTunRoute is idempotent: a route that was never added (or was already
+// removed by Windows) is not a cleanup failure. Other errors keep the state
+// file so recovery can retry and report the exact route which failed.
+func deleteTunRoute(args ...string) error {
+	output, err := exec.Command("route.exe", append([]string{"DELETE"}, args...)...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(strings.TrimSpace(string(output)))
+	for _, missing := range []string{
+		"not found", "nicht gefunden", "не найден", "не существует",
+		"does not exist", "no such route", "element not found",
+	} {
+		if strings.Contains(message, missing) {
+			return nil
+		}
+	}
+	return fmt.Errorf("route DELETE %s: %w: %s",
+		strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 }
 
 func watchStopCommand(cancel context.CancelFunc) {
