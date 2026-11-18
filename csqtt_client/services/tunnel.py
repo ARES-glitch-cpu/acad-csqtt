@@ -19,7 +19,12 @@ def core_command(profile, packet_port, tun_uds=None):
     for key in list(env):
         if key.upper() in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
             del env[key]
-    env.update(CSQTT_PASSWORD=profile.password, CSQTT_HTTP_PROXY=profile.proxy.strip(),
-               CSQTT_PROXY_USER=profile.proxy_user, CSQTT_PROXY_PASSWORD=profile.proxy_password,
-               CSQTT_EVENTS="1")
+    for key in ("CSQTT_HTTP_PROXY", "CSQTT_PROXY_USER", "CSQTT_PROXY_PASSWORD"):
+        env.pop(key, None)
+    env["CSQTT_PASSWORD"] = profile.password
+    env["CSQTT_EVENTS"] = "1"
+    if profile.internet_mode == "proxy":
+        env.update(CSQTT_HTTP_PROXY=profile.proxy.strip(),
+                   CSQTT_PROXY_USER=profile.proxy_user,
+                   CSQTT_PROXY_PASSWORD=profile.proxy_password)
     return args, env
