@@ -294,8 +294,11 @@ class App:
                     self.stop()
                     return
             args += ["--bypass-ip", ",".join(bypass_ips)]
+            # The native helper must watch the GUI process on every OS.
+            # Linux additionally receives the TUN file descriptor over UDS.
+            args += ["--parent-pid", str(os.getpid())]
             if self.tun_uds:
-                args += ["--tun-uds", self.tun_uds, "--parent-pid", str(os.getpid())]
+                args += ["--tun-uds", self.tun_uds]
             if sys.platform == "linux" and os.geteuid() != 0:
                 args.insert(0, shutil.which("pkexec"))
         else:
