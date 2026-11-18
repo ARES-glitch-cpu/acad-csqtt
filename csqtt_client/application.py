@@ -207,12 +207,15 @@ class App:
             profile = self.profile()
             if self.ui.role == "client":
                 share = parse_csqtt_link(self.vars["share_link"].get())
-                if not share.password:
-                    raise ValueError("В ссылке CSQTT нет пароля сервера. Попросите администратора выдать ссылку с паролем.")
+                server_password = share.password or profile.password
+                if not server_password:
+                    raise ValueError(
+                        "В ссылке нет пароля CSQTT. Введите его в поле ниже или попросите администратора выдать ссылку с паролем."
+                    )
                 profile = replace(
                     profile,
                     server=share.server,
-                    password=share.password,
+                    password=server_password,
                     hashes="\n".join(share.hashes) if share.hashes else profile.hashes,
                 )
             hashes = profile.validate()
