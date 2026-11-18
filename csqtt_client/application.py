@@ -207,7 +207,7 @@ class App:
             profile = self.profile()
             if self.ui.role == "client":
                 share = parse_csqtt_link(self.vars["share_link"].get())
-                server_password = share.password or profile.password
+                server_password = share.password or profile.client_password
                 if not server_password:
                     raise ValueError(
                         "В ссылке нет пароля CSQTT. Введите его в поле ниже или попросите администратора выдать ссылку с паролем."
@@ -247,7 +247,7 @@ class App:
             self.config = None
             self.running_profile = profile
             self.tun_bypass_ips = []
-            self.secrets = sorted([profile.password, profile.proxy_password, profile.salt, profile.share_link, *hashes, *(h[:8] for h in hashes)], key=len, reverse=True)
+            self.secrets = sorted([profile.password, profile.client_password, profile.proxy_password, profile.salt, profile.share_link, *hashes, *(h[:8] for h in hashes)], key=len, reverse=True)
             self.core = subprocess.Popen(args, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
             self.read_process(self.core, "core", self.session)
