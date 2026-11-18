@@ -1,5 +1,5 @@
 """Desktop controller: UI events and the connection process lifecycle."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import ctypes
 import os
 import http.client
@@ -21,6 +21,7 @@ from tkinter import filedialog, messagebox
 
 from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW, CORE_FILENAME, HELPER_FILENAME
 from csqtt_client.models.profile import Profile
+from csqtt_client.models.share_link import parse_csqtt_link
 if os.name == "nt":
     from csqtt_client.platform.windows.profiles import load_profile, save_profile, delete_profile, profile_exists
 else:
@@ -204,6 +205,16 @@ class App:
     def start(self):
         try:
             profile = self.profile()
+            if self.ui.role == "client":
+                share = parse_csqtt_link(self.vars["share_link"].get())
+                if not share.password:
+                    raise ValueError("В ссылке CSQTT нет пароля сервера. Попросите администратора выдать ссылку с паролем.")
+                profile = replace(
+                    profile,
+                    server=share.server,
+                    password=share.password,
+                    hashes="\\n".join(share.hashes) if share.hashes else profile.hashes,
+                )
             hashes = profile.validate()
             if not (ROOT / "bin" / CORE_FILENAME).exists() or not (ROOT / "bin" / HELPER_FILENAME).exists():
                 raise ValueError(f"Не найдены bin/{CORE_FILENAME} и bin/{HELPER_FILENAME}. Распакуйте portable целиком.")
@@ -233,7 +244,7 @@ class App:
             self.config = None
             self.running_profile = profile
             self.tun_bypass_ips = []
-            self.secrets = sorted([profile.password, profile.proxy_password, profile.salt, *hashes, *(h[:8] for h in hashes)], key=len, reverse=True)
+            self.secrets = sorted([profile.password, profile.proxy_password, profile.salt, profile.share_link, *hashes, *(h[:8] for h in hashes)], key=len, reverse=True)
             self.core = subprocess.Popen(args, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
             self.read_process(self.core, "core", self.session)
