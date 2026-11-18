@@ -945,6 +945,11 @@ pub async fn run_session(
     if credentials.server_addresses.is_empty() {
         bail!("нет TURN URL в учётных данных");
     }
+    if !crate::http_proxy::configured() {
+        for address in &credentials.server_addresses {
+            crate::log_error!("[TUN_BYPASS] {}", address.ip());
+        }
+    }
     let turn_address = select_turn_address(&credentials.server_addresses, &config)?;
     let turn_path = turn_path_key(turn_address, &config)?;
     let target_display = match (&config.turn_host, &config.turn_port) {
