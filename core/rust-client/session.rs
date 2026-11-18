@@ -946,8 +946,19 @@ pub async fn run_session(
         bail!("нет TURN URL в учётных данных");
     }
     if !crate::http_proxy::configured() {
-        for address in &credentials.server_addresses {
-            crate::log_error!("TUN_BYPASS:{}", address.ip());
+        for address in credentials.server_addresses.iter() {
+            if let Ok(endpoints) = resolve_turn_endpoints(
+                address.as_ref(),
+                config.turn_host.as_deref(),
+                config.turn_port.as_deref(),
+                config.turn_transport,
+            ) {
+                for endpoint in endpoints {
+                    if let Ok(socket) = dns::resolve_socket(&endpoint.socket_authority()).await {
+                        crate::log_error!("TUN_BYPASS:{}", socket.ip());
+                    }
+                }
+            }
         }
     }
     let turn_address = select_turn_address(&credentials.server_addresses, &config)?;
