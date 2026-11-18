@@ -7,6 +7,7 @@ import re
 @dataclass
 class Profile:
     server: str = ""
+    share_link: str = ""
     password: str = ""
     hashes: str = ""
     proxy: str = "10.0.0.1:3128"
