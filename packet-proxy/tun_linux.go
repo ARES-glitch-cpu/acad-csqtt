@@ -232,7 +232,11 @@ func runTunMode(ctx context.Context, core, ip, dns, bypassIP, tunUDS string, par
 	if err := ready(); err != nil {
 		return fmt.Errorf("cannot start local proxies over TUN: %w", err)
 	}
-	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\\n", ifName, tunIP, strings.Join(dnsServers, ","))
+	dnsText := make([]string, 0, len(dnsServers))
+	for _, server := range dnsServers {
+		dnsText = append(dnsText, server.String())
+	}
+	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\\n", ifName, tunIP, strings.Join(dnsText, ","))
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
