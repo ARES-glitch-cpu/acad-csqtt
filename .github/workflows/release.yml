@@ -65,6 +65,9 @@ jobs:
       - name: Check application
         run: go test ./internal/...
 
+      - name: Test packet proxy
+        run: go -C packet-proxy test ./...
+
       - name: Build ZIP and check startup
         run: ./build.ps1
 
