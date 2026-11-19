@@ -24,3 +24,12 @@ under the SIL Open Font License 1.1, provided in assets/fonts/OFL.txt.
 No proxy passwords, CSQTT server credentials or personal profiles are included
 in the portable archive. Saved profiles reside outside this distribution in
 the current Windows user's LocalAppData directory.
+
+
+## Desktop shell attribution
+
+The Wails v2 / Svelte / TypeScript desktop shell is based on
+[but-rr/acad-csqtt v1.4.1](https://github.com/but-rr/acad-csqtt/tree/v1.4.1).
+The shell has been modified for this distribution to add Administrator/Client
+connection roles and a graphical editable DNS override. Preserve this attribution,
+the upstream LICENSE and the third-party notices when redistributing.
