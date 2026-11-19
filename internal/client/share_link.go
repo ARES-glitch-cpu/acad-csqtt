@@ -140,7 +140,7 @@ func parseConnectLink(query string) (ShareLink, error) {
 	if decoded["v"] != "2" {
 		return ShareLink{}, errors.New("Поддерживается только версия ссылки CSQTT v=2.")
 	}
-	if decoded["token"] != "" || (raw["token"] != "" && decoded["token"] == "") {
+	if _, supplied := raw["token"]; supplied {
 		return ShareLink{}, errors.New("Ссылка с VK-токеном не поддерживается. Запросите ссылку с хешами звонков.")
 	}
 	host, port := strings.TrimSpace(decoded["host"]), strings.TrimSpace(decoded["peer"])
