@@ -5,7 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -210,7 +210,7 @@ func (a *App) restoreWindow() {
 	}
 }
 func (a *App) beforeClose(context.Context) bool {
-	if runtime.GOOS != "windows" {
+	if goruntime.GOOS != "windows" {
 		return false
 	}
 	if a.exiting.Load() {
