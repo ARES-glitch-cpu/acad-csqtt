@@ -49,7 +49,7 @@ type routeInfo struct {
 	Metric         int
 }
 
-func runTunMode(ctx context.Context, core, ip, dns, bypassIP string, ready func() error) error {
+func runTunMode(ctx context.Context, core, ip, dns, bypassIP, _ string, _ int, ready func() error) error {
 	if err := requireElevated(); err != nil {
 		return err
 	}
