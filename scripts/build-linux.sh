@@ -32,6 +32,7 @@ install -m 0755 core/rust-client/target/release/client bin/csqtt-core
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o ../bin/packet-proxy .
 )
 chmod 0755 bin/csqtt-core bin/packet-proxy
+cp assets/icons/CS_logo.png build/appicon.png
 
 if [[ ! -x .tools/bin/wails ]]; then
   GOBIN="$ROOT_DIR/.tools/bin" go install github.com/wailsapp/wails/v2/cmd/wails@v2.16.0
