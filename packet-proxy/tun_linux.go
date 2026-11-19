@@ -229,18 +229,10 @@ func runTunMode(ctx context.Context, core, ip, dns, bypassIP, tunUDS string, par
 		return fmt.Errorf("cannot pass the TUN file descriptor to the CSQTT core: %w", err)
 	}
 
-	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\n", ifName, tunIP, dns)
-	stop := make(chan struct{}, 1)
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			if strings.EqualFold(strings.TrimSpace(scanner.Text()), "STOP") {
-				stop <- struct{}{}
-				return
-			}
-		}
-		stop <- struct{}{}
-	}()
+	if err := ready(); err != nil {
+		return fmt.Errorf("cannot start local proxies over TUN: %w", err)
+	}
+	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\\n", ifName, tunIP, strings.Join(dnsServers, ","))
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
