@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -182,12 +183,19 @@ func SaveProfile(directory string, p Profile, remember bool) error {
 	}
 	return os.Rename(temp, path)
 }
+func CoreBinaryName() string { if runtime.GOOS == "windows" { return "csqtt-core.exe" }; return "csqtt-core" }
+func HelperBinaryName() string { if runtime.GOOS == "windows" { return "packet-proxy.exe" }; return "packet-proxy" }
+func tunSocketName() string { return fmt.Sprintf("csqtt-tun-%d", os.Getpid()) }
+
 func CoreCommand(directory string, p Profile, port int) ([]string, []string, error) {
 	hashes, e := p.Validate()
 	if e != nil {
 		return nil, nil, e
 	}
-	args := []string{filepath.Join(directory, "bin/csqtt-core.exe"), "--peer", strings.TrimSpace(p.Server), "--listen", fmt.Sprintf("127.0.0.1:%d", port), "--vk", strings.Join(hashes, ","), "--workers", p.Workers, "--exact-workers", "--turn-transport", "tcp", "--port", "443", "--obfs", p.Obfs, "--srtp-mode", p.SRTP, "--gen", p.Generation, "--salt", p.Salt}
+	args := []string{filepath.Join(directory, "bin", CoreBinaryName()), "--peer", strings.TrimSpace(p.Server), "--listen", fmt.Sprintf("127.0.0.1:%d", port), "--vk", strings.Join(hashes, ","), "--workers", p.Workers, "--exact-workers", "--turn-transport", "tcp", "--port", "443", "--obfs", p.Obfs, "--srtp-mode", p.SRTP, "--gen", p.Generation, "--salt", p.Salt}
+	if p.Tun == "1" && runtime.GOOS == "linux" {
+		args = append(args, "--tun-uds", tunSocketName())
+	}
 	if strings.TrimSpace(p.Turn) != "" {
 		args = append(args, "--turn", strings.TrimSpace(p.Turn))
 	}
