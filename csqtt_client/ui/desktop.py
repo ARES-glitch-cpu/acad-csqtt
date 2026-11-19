@@ -533,6 +533,8 @@ class DesktopUI:
             label(transport.body, title, size=9, color=MUTED).pack(anchor="w", pady=(14, 5))
             ttk.Combobox(transport.body, textvariable=self.app.vars[key], values=values, state="readonly").pack(fill="x")
         self.field(transport.body, "TURN-хост · необязательно", "turn")
+        self.field(transport.body, "DNS-сервер (переопределение)", "dns_override")
+        label(transport.body, "Пустое поле — DNS сервера. При заполнении используется указанный IP в TUN.", color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(6, 0))
         right = frame(body)
         right.grid(row=0, column=1, sticky="new")
         ports = self.section(right, "Локальные порты", "Доступны только на этом компьютере: 127.0.0.1.")
