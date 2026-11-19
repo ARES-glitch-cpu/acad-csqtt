@@ -39,7 +39,7 @@
 </script>
 
 <TitleBar connected={online} {loading} onWindowError={message=>error=message}/>
-<div class="app">
+<div class="app-shell">
  <nav class="sidebar" aria-label="Основная навигация"><img class="rail-logo" src={logo} alt="CSQTT"/><div class="rail-divider"></div>
  {#each [{id:'connection',name:'Подключение',icon:'monitor'},{id:'settings',name:'Настройки',icon:'settings'},{id:'logs',name:'Журнал',icon:'logs'}] as item}
  <button class:active={page===item.id} class="nav-item" aria-label={item.name} aria-current={page===item.id?'page':undefined} on:click={()=>page=item.id}><Icon name={item.icon} size={23}/><span class="nav-tooltip">{item.name}</span></button>{/each}
