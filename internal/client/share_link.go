@@ -192,6 +192,7 @@ func parseConnectLink(query string) (ShareLink, error) {
 					hashes = append(hashes, candidate)
 				}
 			}
+		}
 		if len(hashes) == 0 || len(hashes) > 6 {
 			return ShareLink{}, errors.New("Ссылка CSQTT должна содержать от 1 до 6 хешей звонков.")
 		}
