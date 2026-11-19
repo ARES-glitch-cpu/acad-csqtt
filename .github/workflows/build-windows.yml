@@ -2,7 +2,7 @@ name: Build Windows portable
 
 on:
   push:
-    branches: ["feature/**"]
+    branches: ["feature/**", "ui-v1.4.1-dns-auto-config"]
   workflow_dispatch:
 
 permissions:

@@ -368,6 +368,17 @@ class DesktopUI:
             ttk.Button(row, text="Копировать", command=lambda k=key, t=kind: self.copy_endpoint(k, t)).pack(side="right")
             self.app.vars[key].trace_add("write", lambda *args: self.update_endpoints())
         self.update_endpoints()
+        config_group = self.section(server.body, "Конфигурация", "Можно импортировать TXT, JSON-профиль или ссылку csqtt:// из файла. Автозагрузка использует указанный файл при запуске.")
+        config_group.pack(fill="x", pady=(14, 0))
+        self.app.vars["config_file"] = tk.StringVar(value=self.app.vars["config_file"].get())
+        config_row = frame(config_group.body)
+        config_row.pack(fill="x")
+        config_entry = ttk.Entry(config_row, textvariable=self.app.vars["config_file"], width=1)
+        config_entry.pack(side="left", fill="x", expand=True)
+        ttk.Button(config_row, text="Выбрать…", command=self.select_config_file).pack(side="right", padx=(8, 0))
+        ttk.Button(config_group.body, text="Импортировать сейчас", command=self.import_config_file).pack(anchor="w", pady=(8, 0))
+        auto_load = ttk.Checkbutton(config_group.body, text="Автоматически загружать файл при запуске", variable=self.app.vars["auto_load_config"], onvalue="1", offvalue="0")
+        auto_load.pack(anchor="w", pady=(8, 0))
         remember = ttk.Checkbutton(body, text="Запомнить профиль на этом компьютере", variable=self.app.remember)
         remember.grid(row=1, column=0, columnspan=2, sticky="w", pady=(12, 0))
         self.adapt_columns(body, server, side, "connection", remember)
@@ -392,6 +403,70 @@ class DesktopUI:
         else:
             self.client_link_group.pack_forget()
             self.admin_server_group.pack(fill="x", before=self.hashes_group)
+
+    def select_config_file(self):
+        filename = filedialog.askopenfilename(
+            parent=self.root, title="Выбрать конфигурацию CSQTT",
+            filetypes=[("Конфигурации", "*.txt *.json *.csqtt"), ("Все файлы", "*.*")],
+        )
+        if filename:
+            self.app.vars["config_file"].set(filename)
+            self.app.vars["auto_load_config"].set("1")
+
+    def import_config_file(self, path=None, startup=False):
+        path = path or self.app.vars["config_file"].get().strip()
+        if not path:
+            if not startup:
+                messagebox.showwarning("Файл не выбран", "Выберите файл конфигурации.", parent=self.root)
+            return False
+        try:
+            from pathlib import Path
+            from dataclasses import fields
+            import json
+            source = Path(path)
+            raw = source.read_text(encoding="utf-8-sig")
+            if source.suffix.lower() == ".json":
+                data = json.loads(raw)
+                if isinstance(data, dict) and isinstance(data.get("profile"), dict):
+                    data = data["profile"]
+                if not isinstance(data, dict):
+                    raise ValueError("JSON должен содержать объект профиля.")
+                allowed = {item.name for item in fields(self.app.profile())}
+                for key, value in data.items():
+                    if key in allowed and key != "hashes" and value is not None:
+                        self.app.vars[key].set(str(value))
+                if "hashes" in data:
+                    self.app.hashes.delete("1.0", "end")
+                    self.app.hashes.insert("1.0", str(data["hashes"]))
+                self.apply_role("Администратор")
+            elif "csqtt://" in raw:
+                link = next((line.strip() for line in raw.splitlines() if "csqtt://" in line), raw.strip())
+                self.app.vars["share_link"].set(link)
+                self.apply_role("Клиент")
+            else:
+                try:
+                    values = parse_admin_txt(raw)
+                except UnicodeDecodeError:
+                    values = parse_admin_txt(source.read_text(encoding="cp1251"))
+                for key in ("server", "password", "proxy", "proxy_user", "proxy_password", "internet_mode"):
+                    if key in values:
+                        self.app.vars[key].set(values[key])
+                if "hashes" in values:
+                    self.app.hashes.delete("1.0", "end")
+                    self.app.hashes.insert("1.0", values["hashes"])
+                if "internet_mode" in values:
+                    self.internet_choice.set("Через HTTP-прокси" if values["internet_mode"] == "proxy" else "Напрямую (Wi-Fi / мобильный интернет)")
+                    self.update_internet_mode()
+                self.apply_role("Администратор")
+            if not startup:
+                messagebox.showinfo("Конфигурация загружена", "Данные импортированы. Проверьте настройки перед подключением.", parent=self.root)
+            return True
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
+            if not startup:
+                messagebox.showerror("Ошибка конфигурации", str(error), parent=self.root)
+            else:
+                self.app.append(f"Автозагрузка конфигурации не удалась: {error}")
+            return False
 
     def import_admin_txt(self):
         filename = filedialog.askopenfilename(
@@ -458,6 +533,8 @@ class DesktopUI:
             label(transport.body, title, size=9, color=MUTED).pack(anchor="w", pady=(14, 5))
             ttk.Combobox(transport.body, textvariable=self.app.vars[key], values=values, state="readonly").pack(fill="x")
         self.field(transport.body, "TURN-хост · необязательно", "turn")
+        self.field(transport.body, "DNS-сервер (переопределение)", "dns_override")
+        label(transport.body, "Пустое поле — DNS сервера. При заполнении используется указанный IP в TUN.", color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(6, 0))
         right = frame(body)
         right.grid(row=0, column=1, sticky="new")
         ports = self.section(right, "Локальные порты", "Доступны только на этом компьютере: 127.0.0.1.")

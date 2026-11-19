@@ -40,6 +40,15 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("CSQTT_PROXY_USER", env)
         self.assertNotIn("CSQTT_PROXY_PASSWORD", env)
 
+    def test_dns_override_validation(self):
+        profile = self.profile()
+        self.assertEqual(replace(profile, dns_override="1.1.1.1").validate(), ["testhash123456"])
+        self.assertEqual(replace(profile, dns_override="2001:4860:4860::8888").validate(), ["testhash123456"])
+        with self.assertRaisesRegex(ValueError, "DNS должен быть IP"):
+            replace(profile, dns_override="dns.google").validate()
+        with self.assertRaisesRegex(ValueError, "автозагрузки"):
+            replace(profile, auto_load_config="yes").validate()
+
     def test_hash_normalization_and_validation(self):
         self.assertEqual(normalize_hashes("https://vk.com/call/join/abc123?x=1\nabc123;def456"), ["abc123", "def456"])
         tun_profile = replace(self.profile(), mode="tun", internet_mode="proxy")

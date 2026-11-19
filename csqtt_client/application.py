@@ -55,6 +55,8 @@ class App:
         self.status = tk.StringVar(value="Укажите сервер и прокси, затем нажмите «Подключить».")
         from csqtt_client.ui.desktop import DesktopUI
         self.ui = DesktopUI(self, root, profile, APP_VERSION, ROOT)
+        if profile.auto_load_config == "1" and profile.config_file.strip():
+            root.after(250, lambda: self.ui.import_config_file(profile.config_file, startup=True))
         self.log.bind("<Control-a>", self.select_log)
         self.log.bind("<Control-A>", self.select_log)
         self.log.bind("<Control-c>", lambda event: self.copy_log(selected=True))
@@ -280,6 +282,7 @@ class App:
             return
         profile = self.running_profile
         ip, dns = self.config
+        dns = profile.dns_override.strip() or dns
         args = [str(ROOT / "bin" / HELPER_FILENAME), "--mode", profile.mode,
                 "--core", f"127.0.0.1:{self.packet_port}", "--ip", ip, "--dns", dns]
         if profile.mode == "tun":
