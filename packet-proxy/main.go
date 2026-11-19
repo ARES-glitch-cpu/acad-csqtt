@@ -35,6 +35,7 @@ func main() {
 	parent := flag.Int("parent-pid", 0, "Parent GUI process")
 	systemProxy := flag.Bool("system-proxy", false, "Set Windows system proxy after readiness")
 	recoverTUN := flag.Bool("recover-tun", false, "Recover an interrupted TUN session")
+	tunUDS := flag.String("tun-uds", "", "Linux abstract Unix socket for passing the TUN file descriptor")
 	recoverProxy := flag.Bool("recover-proxy", false, "Restore an orphaned Windows proxy")
 	flag.Parse()
 	if *recoverProxy {
@@ -58,7 +59,7 @@ func main() {
 	ready := func(dial dialer) error { return runProxies(ctx, cancel, *socks, *web, dial, controller) }
 	var err error
 	if *mode == "tun" {
-		err = runTunMode(ctx, *core, *ip, *dns, *bypass, func() error {
+		err = runTunMode(ctx, *core, *ip, *dns, *bypass, *tunUDS, *parent, func() error {
 			d := &net.Dialer{Timeout: 25 * time.Second}
 			return ready(d.DialContext)
 		})
