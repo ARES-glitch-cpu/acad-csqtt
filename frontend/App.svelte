@@ -47,6 +47,12 @@
  </nav>
  <main>
  <header class="page-header"><div><h1>{page==='connection'?'Подключение':page==='settings'?'Настройки':'Журнал'}</h1><p>{page==='connection'?'Интернет через ваш сервер CSQTT.':page==='settings'?'Сервер, корпоративный прокси и параметры туннеля.':'События подключения и диагностика.'}</p></div><span class="status-badge" class:online class:connecting><i></i>{statusTitle}</span></header>
+ <div class="role-switch" aria-label="Роль подключения">
+  <span>Роль</span>
+  <button class:chosen={profile.role!=='client'} disabled={running} on:click={()=>chooseRole('admin')}>Администратор</button>
+  <button class:chosen={profile.role==='client'} disabled={running} on:click={()=>chooseRole('client')}>Клиент</button>
+  <small>{profile.role==='client'?'Подключение по ссылке csqtt://':'Ручные параметры сервера'}</small>
+ </div>
  {#if error}<div class="notice error" role="alert"><Icon name="alert"/>{error}<button aria-label="Закрыть сообщение" on:click={()=>error=''}><Icon name="x"/></button></div>{/if}
  <div class="page connection-page" hidden={page!=='connection'} inert={page!=='connection'}>
  <section class="stats" aria-label="Статистика подключения">{#each [{name:'Активные потоки',value:String(state.active),unit:'',icon:'server'},{name:'Отправлено',value:mb(state.upload),unit:'МБ',icon:'globe'},{name:'Получено',value:mb(state.download),unit:'МБ',icon:'download'}] as metric}<div class="stat"><div><span>{metric.name}</span><Icon name={metric.icon}/></div><strong>{metric.value}<small>{metric.unit}</small></strong></div>{/each}</section>
