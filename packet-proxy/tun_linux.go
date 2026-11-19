@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"bufio"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
