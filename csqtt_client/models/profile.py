@@ -25,6 +25,9 @@ class Profile:
     # Keep new fields at the end to preserve the historical positional signature.
     share_link: str = ""
     client_password: str = ""
+    dns_override: str = ""
+    config_file: str = ""
+    auto_load_config: str = "0"
 
     def validate(self):
         host, port = split_address(self.server)
@@ -57,6 +60,13 @@ class Profile:
             raise ValueError("Число потоков: от 1 до 100.")
         if not 0 <= int(self.generation) < 2**64:
             raise ValueError("Поколение: целое неотрицательное число.")
+        if self.dns_override.strip():
+            try:
+                ipaddress.ip_address(self.dns_override.strip())
+            except ValueError:
+                raise ValueError("Пользовательский DNS должен быть IP-адресом, например 1.1.1.1 или 9.9.9.9.")
+        if self.auto_load_config not in ("0", "1"):
+            raise ValueError("Флаг автозагрузки конфигурации некорректен.")
         if self.mode not in ("proxy", "tun"):
             raise ValueError("Режим подключения должен быть proxy или tun.")
         if self.obfs not in ("unified", "audio", "video") or self.srtp not in ("auto", "wrap", "dtls"):
