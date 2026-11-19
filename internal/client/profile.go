@@ -14,10 +14,10 @@ import (
 
 // String fields keep existing portable profiles compatible without conversion.
 type Profile struct {
-	Role          string `json:"role"`
-	ShareLink     string `json:"share_link"`
+	Role           string `json:"role"`
+	ShareLink      string `json:"share_link"`
 	ClientPassword string `json:"client_password"`
-	DNS           string `json:"dns"`
+	DNS            string `json:"dns"`
 	Server        string `json:"server"`
 	Password      string `json:"password"`
 	Hashes        string `json:"hashes"`
