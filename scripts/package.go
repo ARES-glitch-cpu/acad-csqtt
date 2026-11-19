@@ -87,7 +87,9 @@ func notices(destination string) {
 		}
 	}
 	for _, f := range []string{"LICENSE", "NOTICE.md", "assets/fonts/OFL.txt", "build/wintun-license.txt"} {
-		include(f, f)
+		if _, err := os.Stat(f); err == nil {
+			include(f, f)
+		}
 	}
 	for _, d := range []string{"core", "core/rust-client/vendor/primp", "core/rust-client/vendor/netstack-smoltcp"} {
 		scan(d, d)
