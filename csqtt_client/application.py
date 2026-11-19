@@ -280,6 +280,7 @@ class App:
             return
         profile = self.running_profile
         ip, dns = self.config
+        dns = profile.dns_override.strip() or dns
         args = [str(ROOT / "bin" / HELPER_FILENAME), "--mode", profile.mode,
                 "--core", f"127.0.0.1:{self.packet_port}", "--ip", ip, "--dns", dns]
         if profile.mode == "tun":
