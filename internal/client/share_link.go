@@ -41,8 +41,9 @@ func ParseShareLink(value string) (ShareLink, error) {
 	if strings.HasPrefix(strings.ToLower(rest), "connect?") {
 		return parseConnectLink(rest[len("connect?"):])
 	}
-	if shareBase64.MatchString(rest) && !strings.ContainsAny(rest, "?:@") {
-		if link, err := parseSealedLink(rest); err == nil {
+	compact := strings.Join(strings.Fields(rest), "")
+	if shareBase64.MatchString(compact) && !strings.ContainsAny(compact, "?:@") {
+		if link, err := parseSealedLink(compact); err == nil {
 			return link, nil
 		}
 		return ShareLink{}, errors.New("Не удалось проверить ссылку CSQTT. Скопируйте её заново из панели.")
@@ -95,7 +96,7 @@ func parseSealedLink(value string) (ShareLink, error) {
 }
 
 func decodeShareValue(key, value string) (string, error) {
-	decoded, err := url.QueryUnescape(value)
+	decoded, err := url.PathUnescape(value)
 	if err != nil {
 		return "", fmt.Errorf("В ссылке повреждён параметр %s.", key)
 	}
@@ -172,21 +173,25 @@ func parseConnectLink(query string) (ShareLink, error) {
 			if err != nil {
 				return ShareLink{}, err
 			}
-			candidate := normalizeShareHash(decodedHash)
-			if len(candidate) < 16 {
-				return ShareLink{}, errors.New("Хеш звонка в ссылке CSQTT слишком короткий.")
+			if strings.ContainsAny(decodedHash, " \t\r\n") {
+				return ShareLink{}, errors.New("Хеш звонка в ссылке CSQTT содержит пробел.")
 			}
-			found := false
-			for _, existing := range hashes {
-				if existing == candidate {
-					found = true
-					break
+			for _, token := range strings.FieldsFunc(decodedHash, func(r rune) bool { return r == ',' || r == ';' }) {
+				candidate := normalizeShareHash(token)
+				if len(candidate) < 16 {
+					return ShareLink{}, errors.New("Хеш звонка в ссылке CSQTT слишком короткий.")
+				}
+				found := false
+				for _, existing := range hashes {
+					if existing == candidate {
+						found = true
+						break
+					}
+				}
+				if !found {
+					hashes = append(hashes, candidate)
 				}
 			}
-			if !found {
-				hashes = append(hashes, candidate)
-			}
-		}
 		if len(hashes) == 0 || len(hashes) > 6 {
 			return ShareLink{}, errors.New("Ссылка CSQTT должна содержать от 1 до 6 хешей звонков.")
 		}
