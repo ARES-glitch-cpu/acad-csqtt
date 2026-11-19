@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"regexp"
 	"sort"
 	"strings"
@@ -159,7 +160,7 @@ func (m *Manager) Start(p Profile) error {
 	if m.core != nil || m.state.Status == "stopping" {
 		return errors.New("Дождитесь завершения текущего подключения.")
 	}
-	for _, name := range []string{"csqtt-core.exe", "packet-proxy.exe"} {
+	for _, name := range []string{CoreBinaryName(), HelperBinaryName()} {
 		if _, e := os.Stat(filepath.Join(m.Directory, "bin", name)); e != nil {
 			return fmt.Errorf("Не найден bin/%s. Распакуйте архив целиком.", name)
 		}
@@ -216,7 +217,7 @@ func (m *Manager) helperLocked() {
 	p := m.profile
 	dns := strings.TrimSpace(p.DNS)
 	if dns == "" { dns = m.configDNS }
-	args := []string{filepath.Join(m.Directory, "bin/packet-proxy.exe"), "--core", fmt.Sprintf("127.0.0.1:%d", m.port), "--ip", m.configIP, "--dns", dns, "--socks", "127.0.0.1:" + p.SocksPort, "--http", "127.0.0.1:" + p.HTTPPort, "--parent-pid", fmt.Sprint(os.Getpid()), "--system-proxy=" + fmt.Sprint(p.SystemProxy == "1")}
+	args := []string{filepath.Join(m.Directory, "bin", HelperBinaryName()), "--core", fmt.Sprintf("127.0.0.1:%d", m.port), "--ip", m.configIP, "--dns", dns, "--socks", "127.0.0.1:" + p.SocksPort, "--http", "127.0.0.1:" + p.HTTPPort, "--parent-pid", fmt.Sprint(os.Getpid()), "--system-proxy=" + fmt.Sprint(p.SystemProxy == "1")}
 	if p.Tun == "1" {
 		bypass := m.bypass
 		if p.InternetMode == "proxy" {
@@ -227,6 +228,7 @@ func (m *Manager) helperLocked() {
 			return
 		}
 		args = append(args, "--mode", "tun", "--bypass-ip", strings.Join(bypass, ","))
+		if runtime.GOOS == "linux" { args = append(args, "--tun-uds", tunSocketName()) }
 	}
 	helper, e := m.launch(args, os.Environ(), "helper", m.session)
 	if e != nil {
@@ -385,7 +387,7 @@ func (m *Manager) Recover(tun bool) {
 	}
 	for _, flag := range flags {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		cmd := exec.CommandContext(ctx, filepath.Join(m.Directory, "bin/packet-proxy.exe"), flag)
+		cmd := exec.CommandContext(ctx, filepath.Join(m.Directory, "bin", HelperBinaryName()), flag)
 		hidden(cmd)
 		cmd.Run()
 		cancel()
