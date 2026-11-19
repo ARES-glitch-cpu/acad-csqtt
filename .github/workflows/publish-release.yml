@@ -8,17 +8,17 @@ on:
       tag_name:
         description: "Existing GitHub Release tag"
         required: true
-        default: "errrrrrr"
+        default: "confirm"
         type: string
       windows_run_id:
         description: "Successful Windows build workflow run ID"
         required: true
-        default: "44308996460"
+        default: "44478998311"
         type: string
       linux_run_id:
         description: "Successful Linux build workflow run ID"
         required: true
-        default: "44308996487"
+        default: "44478998217"
         type: string
 
 permissions:
@@ -69,7 +69,7 @@ jobs:
       - name: Upload files to existing GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag_name || 'errrrrrr' }}
+          tag_name: ${{ inputs.tag_name || 'confirm' }}
           files: release-assets/*
           fail_on_unmatched_files: true
           overwrite_files: true
