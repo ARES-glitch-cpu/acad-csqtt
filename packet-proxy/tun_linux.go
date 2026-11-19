@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
@@ -51,7 +52,8 @@ type linuxPhysicalRoute struct {
 	Gateway string
 }
 
-func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error {
+func runTunMode(ctx context.Context, core, ip, dns, bypassIP, tunUDS string, parentPID int, ready func() error) error {
+	if err := loopback(core); err != nil { return err }
 	if os.Geteuid() != 0 {
 		return errors.New("Linux TUN requires administrator privileges; confirm the polkit request")
 	}
@@ -244,7 +246,7 @@ func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error
 	defer ticker.Stop()
 	for {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			fmt.Println("TUN_STOPPED")
 			cleanupNeeded = false
 			return cleanupLinuxTun(state, statePath)
