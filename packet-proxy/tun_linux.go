@@ -3,7 +3,7 @@
 package main
 
 import (
-	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -51,7 +51,8 @@ type linuxPhysicalRoute struct {
 	Gateway string
 }
 
-func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error {
+func runTunMode(ctx context.Context, core, ip, dns, bypassIP, tunUDS string, parentPID int, ready func() error) error {
+	if err := loopback(core); err != nil { return err }
 	if os.Geteuid() != 0 {
 		return errors.New("Linux TUN requires administrator privileges; confirm the polkit request")
 	}
@@ -228,23 +229,19 @@ func runTunMode(_ string, ip, dns, bypassIP, tunUDS string, parentPID int) error
 		return fmt.Errorf("cannot pass the TUN file descriptor to the CSQTT core: %w", err)
 	}
 
-	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\n", ifName, tunIP, dns)
-	stop := make(chan struct{}, 1)
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			if strings.EqualFold(strings.TrimSpace(scanner.Text()), "STOP") {
-				stop <- struct{}{}
-				return
-			}
-		}
-		stop <- struct{}{}
-	}()
+	if err := ready(); err != nil {
+		return fmt.Errorf("cannot start local proxies over TUN: %w", err)
+	}
+	dnsText := make([]string, 0, len(dnsServers))
+	for _, server := range dnsServers {
+		dnsText = append(dnsText, server.String())
+	}
+	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\\n", ifName, tunIP, strings.Join(dnsText, ","))
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-stop:
+		case <-ctx.Done():
 			fmt.Println("TUN_STOPPED")
 			cleanupNeeded = false
 			return cleanupLinuxTun(state, statePath)
@@ -335,8 +332,15 @@ func parseLinuxDNSServers(value string) ([]netip.Addr, error) {
 	seen := map[netip.Addr]bool{}
 	var result []netip.Addr
 	for _, item := range strings.Split(value, ",") {
-		address, err := netip.ParseAddr(strings.TrimSpace(item))
-		if err == nil && address.Is4() && !seen[address] {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		address, err := netip.ParseAddr(item)
+		if err != nil || !address.Is4() {
+			return nil, fmt.Errorf("invalid DNS IPv4 address %q", item)
+		}
+		if !seen[address] {
 			seen[address] = true
 			result = append(result, address)
 		}
