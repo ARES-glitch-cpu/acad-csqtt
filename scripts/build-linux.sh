@@ -71,5 +71,5 @@ done > "$PACKAGE/SHA256SUMS.txt"
 ARCHIVE="$ROOT_DIR/CSQTT-v${VERSION}-Linux-x86_64.tar.gz"
 tar --sort=name --mtime="UTC 2020-01-01" --owner=0 --group=0 --numeric-owner -czf "$ARCHIVE" -C "$ROOT_DIR/dist" CSQTT
 tar -tzf "$ARCHIVE" >/dev/null
-sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+(cd "$ROOT_DIR" && sha256sum "$(basename "$ARCHIVE")") > "${ARCHIVE}.sha256"
 echo "Built $ARCHIVE"
