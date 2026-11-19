@@ -332,8 +332,15 @@ func parseLinuxDNSServers(value string) ([]netip.Addr, error) {
 	seen := map[netip.Addr]bool{}
 	var result []netip.Addr
 	for _, item := range strings.Split(value, ",") {
-		address, err := netip.ParseAddr(strings.TrimSpace(item))
-		if err == nil && address.Is4() && !seen[address] {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		address, err := netip.ParseAddr(item)
+		if err != nil || !address.Is4() {
+			return nil, fmt.Errorf("invalid DNS IPv4 address %q", item)
+		}
+		if !seen[address] {
 			seen[address] = true
 			result = append(result, address)
 		}
