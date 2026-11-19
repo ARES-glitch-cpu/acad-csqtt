@@ -15,7 +15,7 @@ native Windows launcher, DPAPI profile storage, and local SOCKS5/HTTP proxies.
 
 The packet proxy uses the WireGuard Go netstack package (MIT) and gVisor
 (Apache 2.0); it does not establish a WireGuard connection.
-The GUI is packaged with Python, Tcl/Tk and PyInstaller.
+The desktop shell is built with Wails v2 and Svelte/TypeScript; the existing Rust CSQTT core and Go packet proxy are packaged as companion binaries.
 Third-party copyright and license texts are provided in licenses/.
 
 The UI includes Nunito Sans, Copyright 2016 The Nunito Sans Project Authors,
