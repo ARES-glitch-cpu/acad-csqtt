@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,15 +32,14 @@ type tunBypassRoute struct {
 }
 
 type tunRecoveryState struct {
-	InterfaceName        string
-	InterfaceIndex       int
-	ProxyIP              string
-	AddProxyRoute        bool
-	ProxyInterfaceIndex  int
-	BypassRoutes         []tunBypassRoute
-	DNSIPs               []string
-	HelperPID            uint32
-	ParentPID            uint32
+	InterfaceName       string
+	InterfaceIndex      int
+	ProxyIP             string
+	AddProxyRoute       bool
+	ProxyInterfaceIndex int
+	BypassRoutes        []tunBypassRoute
+	DNSIPs              []string
+	HelperPID           uint32
 }
 
 type routeInfo struct {
@@ -52,12 +49,9 @@ type routeInfo struct {
 	Metric         int
 }
 
-func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
+func runTunMode(ctx context.Context, core, ip, dns, bypassIP string, ready func() error) error {
 	if err := requireElevated(); err != nil {
 		return err
-	}
-	if parentPID <= 0 {
-		return errors.New("для TUN нужен корректный --parent-pid главного приложения")
 	}
 	if err := recoverTunStateOnlyIfOrphaned(); err != nil {
 		return fmt.Errorf("не удалось очистить предыдущую TUN-сессию: %w", err)
@@ -104,16 +98,15 @@ func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
 		bypassRoutes = append(bypassRoutes, tunBypassRoute{
 			IP: address.String(), Gateway: physicalRoute.Gateway,
 			InterfaceIndex: physicalRoute.InterfaceIndex,
-			AddRoute: physicalRoute.PrefixLength < 32,
+			AddRoute:       physicalRoute.PrefixLength < 32,
 		})
 	}
 	state := tunRecoveryState{
-		InterfaceName: ifName,
+		InterfaceName:  ifName,
 		InterfaceIndex: iface.Index,
-		BypassRoutes: bypassRoutes,
-		DNSIPs: dnsServers,
-		HelperPID: uint32(os.Getpid()),
-		ParentPID: uint32(parentPID),
+		BypassRoutes:   bypassRoutes,
+		DNSIPs:         dnsServers,
+		HelperPID:      uint32(os.Getpid()),
 	}
 
 	stateFile, err := writeTunRecoveryState(state)
@@ -136,6 +129,21 @@ func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
 	}
 	if err := setTunDNS(ifName, dnsServers); err != nil {
 		return fmt.Errorf("не удалось настроить DNS TUN: %w", err)
+	}
+	if err := runNetsh("interface", "ipv4", "set", "interface", "interface="+ifName, "metric=1"); err != nil {
+		return err
+	}
+	// CSQTT currently carries IPv4. Capture and discard IPv6 instead of bypassing the VPN.
+	if err := runNetsh("interface", "ipv6", "add", "address", "interface="+ifName, "address=fd73:6373:7174::2", "store=active"); err != nil {
+		return err
+	}
+	for _, prefix := range []string{"::/1", "8000::/1"} {
+		if err := runNetsh("interface", "ipv6", "add", "route", prefix, ifName, "metric=1", "store=active"); err != nil {
+			return err
+		}
+	}
+	if err := runNetsh("interface", "ipv6", "set", "interface", "interface="+ifName, "metric=1", "store=active"); err != nil {
+		return err
 	}
 
 	for _, route := range bypassRoutes {
@@ -183,11 +191,6 @@ func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
 	}
 	defer wire.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go watchParentProcess(state.ParentPID, cancel)
-	go watchStopCommand(cancel)
-
 	errCh := make(chan error, 2)
 	go func() {
 		buffer := make([]byte, 65535)
@@ -200,6 +203,9 @@ func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
 				return
 			}
 			for i := 0; i < count; i++ {
+				if sizes[i] == 0 || buffers[i][0]>>4 != 4 {
+					continue
+				}
 				if _, writeErr := wire.Write(buffers[i][:sizes[i]]); writeErr != nil {
 					errCh <- fmt.Errorf("передача IP-пакета в CSQTT: %w", writeErr)
 					return
@@ -212,6 +218,13 @@ func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
 		for {
 			count, readErr := wire.Read(buffer)
 			if readErr != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				if errors.Is(readErr, windows.WSAECONNRESET) {
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
 				errCh <- fmt.Errorf("приём IP-пакета от CSQTT: %w", readErr)
 				return
 			}
@@ -223,23 +236,45 @@ func runTunMode(core, ip, dns, bypassIP, _ string, parentPID int) error {
 	}()
 
 	fmt.Printf("TUN_READY interface=%s ip=%s dns=%s\n", ifName, localIP, strings.Join(dnsServers, ","))
-	select {
-	case <-ctx.Done():
-		fmt.Println("TUN_STOPPED")
-		cleanupNeeded = false
-		if err := cleanupTunState(state, stateFile); err != nil {
-			return fmt.Errorf("ошибка восстановления сетевых настроек: %w", err)
-		}
-		return nil
-	case err := <-errCh:
-		cancel()
+	if err := ready(); err != nil {
 		return err
+	}
+	for {
+		select {
+		case address := <-bypassUpdates:
+			if bypassIPContains(bypassIPs, address.String()) {
+				continue
+			}
+			physical, err := findBestIPv4Route(address)
+			if err != nil {
+				return err
+			}
+			route := tunBypassRoute{IP: address.String(), Gateway: physical.Gateway, InterfaceIndex: physical.InterfaceIndex, AddRoute: physical.PrefixLength < 32}
+			state.BypassRoutes = append(state.BypassRoutes, route)
+			if _, err := writeTunRecoveryState(state); err != nil {
+				return err
+			}
+			if route.AddRoute {
+				if err := runRoute("ADD", route.IP, "MASK", "255.255.255.255", route.Gateway, "METRIC", "1", "IF", strconv.Itoa(route.InterfaceIndex)); err != nil {
+					return err
+				}
+			}
+			bypassIPs = append(bypassIPs, address)
+		case <-ctx.Done():
+			fmt.Println("TUN_STOPPED")
+			cleanupNeeded = false
+			if err := cleanupTunState(state, stateFile); err != nil {
+				return fmt.Errorf("ошибка восстановления сетевых настроек: %w", err)
+			}
+			return nil
+		case err := <-errCh:
+			return err
+		}
 	}
 }
 
 func requireElevated() error {
-	cmd := exec.Command("net", "session")
-	if err := cmd.Run(); err != nil {
+	if !windows.GetCurrentProcessToken().IsElevated() {
 		return errors.New("для режима TUN необходим запуск от имени администратора")
 	}
 	return nil
@@ -320,13 +355,16 @@ func setTunDNS(name string, servers []string) error {
 }
 
 func findBestIPv4Route(target netip.Addr) (routeInfo, error) {
-	output, err := exec.Command("route.exe", "print", "-4").CombinedOutput()
+	output, err := hiddenCommand("route.exe", "print", "-4").CombinedOutput()
 	if err != nil {
 		return routeInfo{}, fmt.Errorf("route print: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	indexByAddress := map[string]int{}
 	interfaces, _ := net.Interfaces()
 	for _, iface := range interfaces {
+		if iface.Name == csqttTunName {
+			continue
+		}
 		addresses, _ := iface.Addrs()
 		for _, raw := range addresses {
 			prefix, parseErr := netip.ParsePrefix(raw.String())
@@ -379,7 +417,7 @@ func findBestIPv4Route(target netip.Addr) (routeInfo, error) {
 }
 
 func runRoute(args ...string) error {
-	output, err := exec.Command("route.exe", args...).CombinedOutput()
+	output, err := hiddenCommand("route.exe", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("route %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
@@ -387,7 +425,7 @@ func runRoute(args ...string) error {
 }
 
 func runNetsh(args ...string) error {
-	output, err := exec.Command("netsh.exe", args...).CombinedOutput()
+	output, err := hiddenCommand("netsh.exe", args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("netsh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
@@ -493,49 +531,39 @@ func processIsRunning(pid uint32) bool {
 
 func cleanupTunState(state tunRecoveryState, path string) error {
 	var problems []string
-	delete := func(description string, args ...string) {
-		if err := deleteTunRoute(args...); err != nil {
-			problems = append(problems, description+": "+err.Error())
-		}
-	}
-
 	if state.InterfaceIndex > 0 {
-		iface := strconv.Itoa(state.InterfaceIndex)
-		delete("маршрут 0.0.0.0/1", "0.0.0.0", "MASK", "128.0.0.0", "IF", iface)
-		delete("маршрут 128.0.0.0/1", "128.0.0.0", "MASK", "128.0.0.0", "IF", iface)
+		_ = runRoute("DELETE", "0.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
+		_ = runRoute("DELETE", "128.0.0.0", "MASK", "128.0.0.0", "IF", strconv.Itoa(state.InterfaceIndex))
+	}
+	if state.InterfaceIndex > 0 {
 		for _, server := range state.DNSIPs {
-			delete("DNS-маршрут "+server, server, "MASK", "255.255.255.255", "IF", iface)
+			_ = runRoute("DELETE", server, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.InterfaceIndex))
 		}
 	}
 	if len(state.BypassRoutes) > 0 {
 		for _, route := range state.BypassRoutes {
 			if route.AddRoute && route.InterfaceIndex > 0 {
-				delete("обходной маршрут "+route.IP,
-					route.IP, "MASK", "255.255.255.255", "IF", strconv.Itoa(route.InterfaceIndex))
+				_ = runRoute("DELETE", route.IP, "MASK", "255.255.255.255", "IF", strconv.Itoa(route.InterfaceIndex))
 			}
 		}
 	} else if state.AddProxyRoute && state.ProxyIP != "" && state.ProxyInterfaceIndex > 0 {
 		// Backward-compatible cleanup for an older recovery state file.
-		delete("маршрут прокси "+state.ProxyIP,
-			state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
+		_ = runRoute("DELETE", state.ProxyIP, "MASK", "255.255.255.255", "IF", strconv.Itoa(state.ProxyInterfaceIndex))
 	}
-	if state.InterfaceName != "" {
-		// A removed Wintun adapter has no remaining address or DNS settings
-		// to restore. Avoid keeping an unrecoverable journal for that case.
-		if _, ifaceErr := net.InterfaceByName(state.InterfaceName); ifaceErr == nil {
-			if err := runNetsh("interface", "ipv4", "set", "dnsservers",
-				"name="+state.InterfaceName, "source=dhcp"); err != nil {
-				problems = append(problems, "восстановление DNS адаптера: "+err.Error())
-			}
-			if err := runNetsh("interface", "ipv4", "set", "address",
-				"name="+state.InterfaceName, "source=dhcp"); err != nil {
-				problems = append(problems, "сброс адреса адаптера: "+err.Error())
-			}
+	if iface, err := net.InterfaceByName(state.InterfaceName); err == nil && iface.Index == state.InterfaceIndex {
+		for _, prefix := range []string{"::/1", "8000::/1"} {
+			_ = runNetsh("interface", "ipv6", "delete", "route", prefix, state.InterfaceName, "store=active")
+		}
+		_ = runNetsh("interface", "ipv6", "delete", "address", state.InterfaceName, "fd73:6373:7174::2", "store=active")
+		if err := runNetsh("interface", "ipv4", "set", "dnsservers",
+			"name="+state.InterfaceName, "source=dhcp"); err != nil {
+			problems = append(problems, err.Error())
+		}
+		if err := runNetsh("interface", "ipv4", "set", "address",
+			"name="+state.InterfaceName, "source=dhcp"); err != nil {
+			problems = append(problems, err.Error())
 		}
 	}
-
-	// Keep the recovery journal until every cleanup step succeeds. The next
-	// launch can retry rather than silently accepting stale system routes.
 	if len(problems) == 0 {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			problems = append(problems, err.Error())
@@ -547,46 +575,12 @@ func cleanupTunState(state tunRecoveryState, path string) error {
 	return nil
 }
 
-// deleteTunRoute is idempotent: a route that was never added (or was already
-// removed by Windows) is not a cleanup failure. Other errors keep the state
-// file so recovery can retry and report the exact route which failed.
-func deleteTunRoute(args ...string) error {
-	output, err := exec.Command("route.exe", append([]string{"DELETE"}, args...)...).CombinedOutput()
-	if err == nil {
-		return nil
-	}
-	message := strings.ToLower(strings.TrimSpace(string(output)))
-	for _, missing := range []string{
-		"not found", "nicht gefunden", "не найден", "не существует",
-		"does not exist", "no such route", "element not found",
-	} {
-		if strings.Contains(message, missing) {
-			return nil
-		}
-	}
-	return fmt.Errorf("route DELETE %s: %w: %s",
-		strings.Join(args, " "), err, strings.TrimSpace(string(output)))
-}
-
-func watchStopCommand(cancel context.CancelFunc) {
-	scanner := bufio.NewScanner(os.Stdin)
-	for scanner.Scan() {
-		if strings.EqualFold(strings.TrimSpace(scanner.Text()), "STOP") {
-			cancel()
-			return
-		}
-	}
-}
-
 func watchParentProcess(pid uint32, cancel context.CancelFunc) {
 	if pid == 0 {
-		cancel()
 		return
 	}
 	handle, err := windows.OpenProcess(windows.SYNCHRONIZE, false, pid)
 	if err != nil {
-		// Never leave system routes and DNS redirected when the GUI process
-		// cannot be monitored (for example, if its PID is already gone).
 		cancel()
 		return
 	}
