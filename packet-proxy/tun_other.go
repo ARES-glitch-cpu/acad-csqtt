@@ -2,10 +2,13 @@
 
 package main
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
-func runTunMode(core, ip, dns, bypassIP, tunUDS string, _ int) error {
-	return errors.New("системный режим TUN поддерживается только в Windows-сборке")
+func runTunMode(_ context.Context, _ string, _ string, _ string, _ string, _ string, _ int, _ func() error) error {
+	return errors.New("системный режим TUN поддерживается только в Linux и Windows")
 }
 
 func recoverTunState() (bool, error) {
