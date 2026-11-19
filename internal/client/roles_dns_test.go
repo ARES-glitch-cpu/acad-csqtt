@@ -56,6 +56,15 @@ func TestParseClientShareLinks(t *testing.T) {
 			t.Fatalf("unexpected parsed encrypted link: %#v", link)
 		}
 	})
+	t.Run("plus password and multiple hashes", func(t *testing.T) {
+		link, err := ParseShareLink("csqtt://connect?v=2&host=203.0.113.10&peer=46000&password=plus+password&hashes=abcdef1234567890%2Cfedcba0987654321")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if link.Password != "plus+password" || link.Hashes != "abcdef1234567890\nfedcba0987654321" {
+			t.Fatalf("unexpected parsed link: %#v", link)
+		}
+	})
 	t.Run("legacy link", func(t *testing.T) {
 		link, err := ParseShareLink("csqtt://legacy-pass@203.0.113.11:46001")
 		if err != nil {
