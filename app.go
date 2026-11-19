@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -209,6 +210,9 @@ func (a *App) restoreWindow() {
 	}
 }
 func (a *App) beforeClose(context.Context) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
 	if a.exiting.Load() {
 		return false
 	}
@@ -237,15 +241,16 @@ func (a *App) shutdown(context.Context) {
 func appDirectory() string {
 	exe, _ := os.Executable()
 	directory := filepath.Dir(exe)
-	if _, e := os.Stat(filepath.Join(directory, "bin/csqtt-core.exe")); e == nil {
+	if _, e := os.Stat(filepath.Join(directory, "bin", client.CoreBinaryName())); e == nil {
 		return directory
 	}
 	wd, _ := os.Getwd()
-	if _, e := os.Stat(filepath.Join(wd, "VERSION")); e == nil {
+	if _, e := os.Stat(filepath.Join(wd, "VERSION")); e == nil && fileExists(filepath.Join(wd, "bin", client.CoreBinaryName())) {
 		return wd
 	}
 	return directory
 }
+func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }
 func hasArgument(value string) bool {
 	for _, arg := range os.Args {
 		if arg == value {
