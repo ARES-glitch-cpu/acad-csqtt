@@ -144,6 +144,17 @@ func (a *App) connect() error {
 	a.mu.Lock()
 	p, remember := a.profile, a.remember
 	a.mu.Unlock()
+	if p.Role == "client" {
+		shared, err := client.ParseShareLink(p.ShareLink)
+		if err != nil { return err }
+		p.Server = shared.Server
+		p.Password = shared.Password
+		if p.Password == "" { p.Password = p.ClientPassword }
+		if shared.Hashes != "" { p.Hashes = shared.Hashes }
+		if p.Password == "" {
+			return errors.New("В ссылке нет пароля. Укажите пароль клиента или попросите ссылку с паролем.")
+		}
+	}
 	if _, e := p.Validate(); e != nil {
 		return e
 	}
