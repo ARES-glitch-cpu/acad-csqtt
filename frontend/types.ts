@@ -1,5 +1,5 @@
 export interface Profile {
-  role: 'admin' | 'client';
+  role: string;
   share_link: string;
   client_password: string;
   dns: string;
@@ -17,9 +17,9 @@ export interface Profile {
   srtp: string;
   generation: string;
   salt: string;
-  internet_mode: 'proxy' | 'direct';
-  system_proxy: '0' | '1';
-  tun: '0' | '1';
+  internet_mode: string;
+  system_proxy: string;
+  tun: string;
 }
 export interface Update { version: string; url: string }
 export interface State {
