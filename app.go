@@ -52,8 +52,16 @@ func NewApp(directory, version string, smoke bool) *App {
 }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	tray.SetWindowCallbacks(
+		func() { runtime.WindowHide(a.ctx) },
+		func() {
+			runtime.WindowShow(a.ctx)
+			runtime.WindowUnminimise(a.ctx)
+			runtime.WindowSetFocus(a.ctx)
+		},
+	)
 	if !a.smoke {
-		if icon, e := tray.New(trayIcon, a.Quit); e == nil {
+		if icon, e := tray.New(trayIconData, a.Quit); e == nil {
 			a.tray.Store(icon)
 		}
 	}
@@ -210,13 +218,15 @@ func (a *App) restoreWindow() {
 	}
 }
 func (a *App) beforeClose(context.Context) bool {
-	if goruntime.GOOS != "windows" {
+	if goruntime.GOOS != "windows" && goruntime.GOOS != "linux" {
 		return false
 	}
 	if a.exiting.Load() {
 		return false
 	}
-	_ = a.HideToTray()
+	if err := a.HideToTray(); err != nil {
+		return false
+	}
 	return true
 }
 func (a *App) Quit() {

@@ -20,6 +20,7 @@ command -v node >/dev/null || { echo "Node.js is required" >&2; exit 1; }
 command -v npm >/dev/null || { echo "npm is required" >&2; exit 1; }
 command -v xvfb-run >/dev/null || { echo "xvfb-run is required for GUI smoke test" >&2; exit 1; }
 
+go mod download github.com/getlantern/systray@v1.2.2
 go test ./internal/...
 go -C packet-proxy test ./...
 

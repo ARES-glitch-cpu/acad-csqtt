@@ -1,10 +1,12 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package tray
 
 import "fmt"
 
 type Tray struct{}
+
+func SetWindowCallbacks(_ func(), _ func()) {}
 
 func New(_ []byte, _ func()) (*Tray, error) {
 	return nil, fmt.Errorf("трей поддерживается только в Windows")

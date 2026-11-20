@@ -56,3 +56,17 @@ PR проверяется сборкой ZIP и коротким запуско�
 - [WireGuard Go netstack](https://git.zx2c4.com/wireguard-go/tree/tun/netstack) и gVisor — локальный TCP/IP-стек. WireGuard-соединение не создаётся.
 - [Wintun](https://www.wintun.net/) — официальный подписанный драйвер 0.14.1 AMD64.
 - Nunito Sans — SIL Open Font License 1.1.
+
+
+## Linux: сворачивание в трей (v1.4.1)
+
+Закрытие окна крестиком скрывает CSQTT в системный трей и не прерывает подключение. В меню значка есть **«Открыть»** (восстановить окно) и **«Выход»** (полностью закрыть CSQTT и остановить туннель). Если значок трея не запускается, окно не скрывается — оно закрывается штатно, чтобы не оставить приложение невидимым.
+
+Для Ubuntu/GNOME установите AppIndicator:
+
+```bash
+sudo apt update
+sudo apt install gnome-shell-extension-appindicator libayatana-appindicator3-1
+```
+
+Включите расширение **AppIndicator and KStatusNotifierItem Support** в GNOME Extensions и перезапустите графический сеанс.

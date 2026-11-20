@@ -3,6 +3,7 @@ module csqtt.desktop
 go 1.27.2
 
 require (
+	github.com/getlantern/systray v1.2.2
 	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/sys v0.49.0
 )

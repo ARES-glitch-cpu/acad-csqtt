@@ -111,6 +111,8 @@ type iconData struct {
 	BalloonIcon         uintptr
 }
 
+func SetWindowCallbacks(_ func(), _ func()) {}
+
 type Tray struct {
 	mainWindow, window, icon, menu, instance uintptr
 	callback, mainCallback                   uintptr
