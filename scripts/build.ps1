@@ -2,6 +2,8 @@
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $projectRoot
 $version = (Get-Content -LiteralPath VERSION -Raw).Trim()
+& go mod tidy
+if ($LASTEXITCODE -ne 0) { throw 'Go dependency tidy failed' }
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid VERSION' }
 if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag must match VERSION' }
 if ((Get-Content -LiteralPath wails.json -Raw | ConvertFrom-Json).info.productVersion -ne $version) { throw 'Version mismatch' }
