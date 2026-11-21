@@ -57,7 +57,6 @@ func (a *App) startup(ctx context.Context) {
 		func() {
 			runtime.WindowShow(a.ctx)
 			runtime.WindowUnminimise(a.ctx)
-			runtime.WindowSetFocus(a.ctx)
 		},
 	)
 	if !a.smoke {
