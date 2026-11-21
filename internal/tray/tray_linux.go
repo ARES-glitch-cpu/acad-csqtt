@@ -29,6 +29,13 @@ func New(icon []byte, onExit func()) (*Tray, error) {
 	if len(icon) == 0 {
 		return nil, errors.New("иконка трея не задана")
 	}
+	// Check the per-user bus before starting the tray goroutine. The upstream
+	// loop cannot recover if SessionBus itself is unavailable at startup.
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		return nil, errors.New("пользовательская D-Bus-сессия недоступна — трей отключён")
+	}
+	_ = conn.Close()
 	t := &Tray{done: make(chan struct{})}
 	go systray.Run(func() {
 		systray.SetIcon(icon)
@@ -76,7 +83,7 @@ func (t *Tray) Hide() error {
 	defer conn.Close()
 	var owner string
 	if err := conn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, "org.kde.StatusNotifierWatcher").Store(&owner); err != nil || owner == "" {
-		return errors.New("панель рабочего стола не поддерживает StatusNotifierItem — окно оставлено открытым")
+		return errors.New("панель рабочего стола не поддерживает StatusNotifierItem — окно будет закрыто штатно")
 	}
 	if windowHide != nil {
 		windowHide()
