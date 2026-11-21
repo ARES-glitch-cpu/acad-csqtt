@@ -15,6 +15,19 @@ if (Test-Path '.tools/cargo/bin/cargo.exe') {
 & cargo build --release --locked --manifest-path core/rust-client/Cargo.toml
 if ($LASTEXITCODE -ne 0) { throw 'Core build failed' }
 New-Item -ItemType Directory -Force bin,build/windows,.tools/bin | Out-Null
+
+# Ship Microsoft's official Evergreen Standalone Runtime installer. Unlike the
+# Wails bootstrapper, this package installs WebView2 without downloading runtime
+# payloads during the user's first launch.
+$webviewInstaller = Join-Path $projectRoot 'bin/MicrosoftEdgeWebView2RuntimeInstallerX64.exe'
+Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124701' -OutFile $webviewInstaller
+if (-not (Test-Path -LiteralPath $webviewInstaller) -or (Get-Item -LiteralPath $webviewInstaller).Length -lt 1000000) {
+ throw 'WebView2 standalone installer download is missing or incomplete'
+}
+$webviewSignature = Get-AuthenticodeSignature -LiteralPath $webviewInstaller
+if ($webviewSignature.Status -ne 'Valid' -or $webviewSignature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+ throw "WebView2 standalone installer signature check failed: $($webviewSignature.Status)"
+}
 & go run scripts/package.go wintun
 if ($LASTEXITCODE -ne 0) { throw 'Wintun preparation failed' }
 Copy-Item -LiteralPath core/rust-client/target/release/client.exe -Destination bin/csqtt-core.exe -Force
@@ -34,7 +47,7 @@ try {
  & npm.cmd run build
  if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
 } finally { Pop-Location }
-& $wails build -s -skipbindings -trimpath -platform windows/amd64 -webview2 embed
+& $wails build -s -skipbindings -trimpath -platform windows/amd64 -webview2 error
 if ($LASTEXITCODE -ne 0) { throw 'Wails build failed' }
 $packageDir = Join-Path $projectRoot 'dist/CSQTT'
 if (Test-Path -LiteralPath $packageDir) {
@@ -43,13 +56,17 @@ if (Test-Path -LiteralPath $packageDir) {
  Remove-Item -LiteralPath $resolvedPackage -Recurse -Force
 }
 New-Item -ItemType Directory -Force "$packageDir/bin","$packageDir/_internal" | Out-Null
-Copy-Item -LiteralPath build/bin/CSQTT.exe -Destination $packageDir -Force
+Copy-Item -LiteralPath build/bin/CSQTT.exe -Destination "$packageDir/CSQTT-App.exe" -Force
 foreach ($file in @('csqtt-core.exe','packet-proxy.exe','wintun.dll')) { Copy-Item -LiteralPath "bin/$file" -Destination "$packageDir/bin" -Force }
+Copy-Item -LiteralPath $webviewInstaller -Destination "$packageDir/bin/MicrosoftEdgeWebView2RuntimeInstallerX64.exe" -Force
 Copy-Item -LiteralPath "$env:SystemRoot/System32/vcruntime140.dll" -Destination "$packageDir/bin/VCRUNTIME140.dll" -Force
 Copy-Item -LiteralPath VERSION -Destination "$packageDir/_internal" -Force
 & go run scripts/package.go notices $packageDir
 if ($LASTEXITCODE -ne 0) { throw 'Notices collection failed' }
-$smoke = Start-Process -FilePath "$packageDir/CSQTT.exe" -ArgumentList '--smoke' -WindowStyle Hidden -PassThru
+$launcher = Join-Path $packageDir 'CSQTT.exe'
+& go build -trimpath -ldflags '-s -w -H=windowsgui' -o $launcher ./cmd/windows-launcher
+if ($LASTEXITCODE -ne 0) { throw 'Windows WebView2 launcher build failed' }
+$smoke = Start-Process -FilePath $launcher -ArgumentList '--smoke' -WindowStyle Hidden -PassThru
 if (-not $smoke.WaitForExit(15000)) { $smoke.Kill(); throw 'GUI startup timeout' }
 if ($smoke.ExitCode -ne 0) { throw 'GUI startup failed' }
 & go run scripts/package.go zip $packageDir "CSQTT-v$version-Win10-x64.zip"
