@@ -7,7 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/getlantern/systray"
+	"github.com/cardinalby/go-systray"
+	"github.com/godbus/dbus/v5"
 )
 
 var windowHide func()
@@ -65,6 +66,17 @@ func New(icon []byte, onExit func()) (*Tray, error) {
 func (t *Tray) Hide() error {
 	if t == nil || t.closed.Load() || !t.ready.Load() {
 		return errors.New("системный трей недоступен — окно не скрыто")
+	}
+	// StatusNotifierItem needs a desktop panel watcher. Keep the window visible
+	// when the panel cannot display tray icons, avoiding an invisible process.
+	conn, err := dbus.SessionBus()
+	if err != nil {
+		return errors.New("не удалось подключиться к системному трею D-Bus — окно оставлено открытым")
+	}
+	defer conn.Close()
+	var owner string
+	if err := conn.BusObject().Call("org.freedesktop.DBus.GetNameOwner", 0, "org.kde.StatusNotifierWatcher").Store(&owner); err != nil || owner == "" {
+		return errors.New("панель рабочего стола не поддерживает StatusNotifierItem — окно оставлено открытым")
 	}
 	if windowHide != nil {
 		windowHide()
