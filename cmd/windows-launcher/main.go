@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,6 +27,27 @@ type registryLocation struct {
 	path string
 }
 
+func runtimeVersionSupported(version string) bool {
+	parts := strings.Split(strings.TrimSpace(version), ".")
+	required := []int{94, 0, 992, 31} // Wails v2.16.0 minimum WebView2 version.
+	if len(parts) < len(required) {
+		return false
+	}
+	for i, minimum := range required {
+		current, err := strconv.Atoi(parts[i])
+		if err != nil {
+			return false
+		}
+		if current > minimum {
+			return true
+		}
+		if current < minimum {
+			return false
+		}
+	}
+	return true
+}
+
 func runtimeInstalled() bool {
 	locations := []registryLocation{
 		{registry.LOCAL_MACHINE, `SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\` + webView2ClientID},
@@ -39,7 +61,7 @@ func runtimeInstalled() bool {
 		}
 		version, _, err := key.GetStringValue("pv")
 		_ = key.Close()
-		if err == nil && strings.TrimSpace(version) != "" && strings.TrimSpace(version) != "0.0.0.0" {
+		if err == nil && runtimeVersionSupported(version) {
 			return true
 		}
 	}
