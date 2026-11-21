@@ -62,11 +62,17 @@ PR проверяется сборкой ZIP и коротким запуско�
 
 Закрытие окна крестиком скрывает CSQTT в системный трей и не прерывает подключение. В меню значка есть **«Открыть»** (восстановить окно) и **«Выход»** (полностью закрыть CSQTT и остановить туннель). Если значок трея не запускается, окно не скрывается — оно закрывается штатно, чтобы не оставить приложение невидимым.
 
-Для Ubuntu/GNOME установите AppIndicator:
+Linux portable архив рассчитан на x86_64 и Ubuntu 22.04+ / Debian 12+ (WebKit2GTK ABI 4.1). Перед первым запуском установите системные runtime-библиотеки:
 
 ```bash
 sudo apt update
-sudo apt install gnome-shell-extension-appindicator libayatana-appindicator3-1
+sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0 libayatana-appindicator3-1
 ```
 
-Включите расширение **AppIndicator and KStatusNotifierItem Support** в GNOME Extensions и перезапустите графический сеанс.
+Для отображения значка трея в Ubuntu/GNOME также установите и включите AppIndicator:
+
+```bash
+sudo apt install gnome-shell-extension-appindicator
+```
+
+Включите расширение **AppIndicator and KStatusNotifierItem Support** в GNOME Extensions и перезапустите графический сеанс. После распаковки запустите программу из терминала командой `./CSQTT` — так будет видна точная системная ошибка, если не хватает другой библиотеки.
