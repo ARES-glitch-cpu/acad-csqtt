@@ -67,6 +67,12 @@ if ldd "$PACKAGE/CSQTT" | grep -q "not found"; then
   exit 1
 fi
 
+if ldd "$PACKAGE/CSQTT" | grep -Eqi 'libayatana-appindicator|libappindicator'; then
+  echo "Linux binary must not depend on AppIndicator shared libraries:" >&2
+  ldd "$PACKAGE/CSQTT" | grep -Ei 'libayatana-appindicator|libappindicator' >&2 || true
+  exit 1
+fi
+
 xvfb-run -a env GDK_BACKEND=x11 "$PACKAGE/CSQTT" --smoke
 
 find "$PACKAGE" -type f ! -name SHA256SUMS.txt -print0 | sort -z | while IFS= read -r -d "" file; do
