@@ -19,7 +19,6 @@ import (
 
 const (
 	webView2ClientID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-	webView2Download = "https://developer.microsoft.com/microsoft-edge/webview2/"
 )
 
 type registryLocation struct {
@@ -129,6 +128,7 @@ func main() {
 	appDir := filepath.Dir(executable)
 
 	if !runtimeInstalled() {
+		messageBox("На компьютере не найден Microsoft Edge WebView2 Runtime. Сейчас будет выполнена локальная установка. Подождите завершения, после чего CSQTT запустится автоматически.", "CSQTT — подготовка запуска", 0x40)
 		if err := installRuntime(appDir); err != nil {
 			showRuntimeError(err)
 			os.Exit(1)
