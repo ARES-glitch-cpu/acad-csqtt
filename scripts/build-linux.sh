@@ -44,7 +44,7 @@ npm ci --no-audit --no-fund
 npm run build
 popd >/dev/null
 
-.tools/bin/wails build -s -skipbindings -trimpath -platform linux/amd64
+.tools/bin/wails build -s -skipbindings -trimpath -platform linux/amd64 -tags webkit2_41
 
 PACKAGE="$ROOT_DIR/dist/CSQTT"
 rm -rf "$PACKAGE"
@@ -60,6 +60,12 @@ cp README.md LICENSE NOTICE.md "$PACKAGE/"
 cp -a assets "$PACKAGE/assets"
 
 go run scripts/package.go notices "$PACKAGE"
+
+if ldd "$PACKAGE/CSQTT" | grep -q "not found"; then
+  echo "Linux binary has unresolved runtime libraries:" >&2
+  ldd "$PACKAGE/CSQTT" | grep "not found" >&2 || true
+  exit 1
+fi
 
 xvfb-run -a env GDK_BACKEND=x11 "$PACKAGE/CSQTT" --smoke
 
