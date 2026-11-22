@@ -57,16 +57,27 @@ func TestPortableProfileAndCommandCompatibility(t *testing.T) {
 	if !strings.Contains(strings.Join(env, "\n"), "CSQTT_PROXY_PASSWORD="+p.ProxyPassword) {
 		t.Fatal("missing proxy auth")
 	}
-	t.Setenv("CSQTT_HTTP_PROXY", "stale")
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "CSQTT_HTTP_PROXY", "CSQTT_PROXY_USER", "CSQTT_PROXY_PASSWORD"} {
+		t.Setenv(key, "stale")
+	}
 	p.InternetMode = "direct"
-	p.Proxy = ""
+	// Keep the corporate proxy details in the profile: direct mode must retain
+	// saved form values but never pass them to the core process.
+	p.Proxy = "198.51.100.10:3128"
+	p.ProxyUser = "stale-user"
+	p.ProxyPassword = "stale-password"
 	args, env, e = CoreCommand(directory, p, 19091)
 	if e != nil {
 		t.Fatal(e)
 	}
+	blocked := map[string]bool{
+		"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+		"CSQTT_HTTP_PROXY": true, "CSQTT_PROXY_USER": true, "CSQTT_PROXY_PASSWORD": true,
+	}
 	for _, v := range env {
-		if strings.HasPrefix(v, "CSQTT_HTTP_PROXY=") || strings.HasPrefix(v, "CSQTT_PROXY_PASSWORD=") {
-			t.Fatal("direct mode inherited proxy")
+		key := strings.ToUpper(strings.SplitN(v, "=", 2)[0])
+		if blocked[key] {
+			t.Fatalf("direct mode inherited %s", key)
 		}
 	}
 	if e := SaveProfile(directory, p, false); e != nil {
@@ -76,6 +87,47 @@ func TestPortableProfileAndCommandCompatibility(t *testing.T) {
 		t.Fatal("profile not removed")
 	}
 }
+func TestSystemProxyPreferenceCanChangeBeforeHelperStarts(t *testing.T) {
+	m := NewManager(t.TempDir(), "1.4.1")
+	defer m.Close()
+
+	m.profile = valid()
+	m.profile.SystemProxy = "1"
+	m.SetSystemProxy(false)
+	if m.profile.SystemProxy != "0" {
+		t.Fatal("disable request was not retained before helper startup")
+	}
+
+	m.SetSystemProxy(true)
+	if m.profile.SystemProxy != "1" {
+		t.Fatal("enable request was not retained before helper startup")
+	}
+}
+
+func TestHelperReadyStartsSessionTimerAndAutomaticInternetCheck(t *testing.T) {
+	m := NewManager(t.TempDir(), "1.4.1")
+	defer m.Close()
+	m.session = 1
+	m.profile = valid()
+	m.profile.HTTPPort = "0" // Fail locally without depending on external connectivity.
+
+	m.consume(1, "helper", "PROXY_READY SOCKS5=127.0.0.1:1080 HTTP=127.0.0.1:0")
+	s := m.Snapshot()
+	if !s.Ready || s.SessionStartedAt <= 0 {
+		t.Fatal("session timer did not start when local proxy became ready")
+	}
+	found := false
+	for _, line := range s.Logs {
+		if strings.Contains(line.Message, "автоматическую проверку интернета") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("automatic internet check was not announced")
+	}
+}
+
 func TestUpdateOpensReleasePageAndRejectsUntrustedAssets(t *testing.T) {
 	tag := "v1.4.2"
 	asset := map[string]string{"name": "CSQTT-" + tag + "-Win10-x64.zip", "state": "uploaded", "browser_download_url": "https://github.com/" + repository + "/releases/download/" + tag + "/CSQTT-" + tag + "-Win10-x64.zip"}

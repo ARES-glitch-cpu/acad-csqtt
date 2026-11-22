@@ -24,7 +24,7 @@ export interface Profile {
 export interface Update { version: string; url: string }
 export interface State {
   status: string; message: string; active: number; upload: number; download: number;
-  ip: string; ready: boolean; logs: {time: string; message: string; level: string}[];
+  ip: string; sessionStartedAt: number; ready: boolean; logs: {time: string; message: string; level: string}[];
   revision: number; update: Update | null; updateChecking: boolean; updateMessage: string;
 }
 export interface Initial { profile: Profile; state: State; version: string; error: string }

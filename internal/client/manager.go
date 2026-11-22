@@ -25,13 +25,14 @@ type LogLine struct {
 	Level   string `json:"level"`
 }
 type State struct {
-	Status         string    `json:"status"`
-	Message        string    `json:"message"`
-	Active         int       `json:"active"`
-	Upload         uint64    `json:"upload"`
-	Download       uint64    `json:"download"`
-	IP             string    `json:"ip"`
-	Ready          bool      `json:"ready"`
+	Status           string    `json:"status"`
+	Message          string    `json:"message"`
+	Active           int       `json:"active"`
+	Upload           uint64    `json:"upload"`
+	Download         uint64    `json:"download"`
+	IP               string    `json:"ip"`
+	SessionStartedAt int64     `json:"sessionStartedAt"`
+	Ready            bool      `json:"ready"`
 	Logs           []LogLine `json:"logs"`
 	Revision       uint64    `json:"revision"`
 	Update         *Update   `json:"update"`
@@ -45,10 +46,14 @@ type process struct {
 	write sync.Mutex
 }
 
-func (p *process) send(line string) {
+func (p *process) send(line string) error {
 	p.write.Lock()
 	defer p.write.Unlock()
-	io.WriteString(p.stdin, line+"\n")
+	if p.stdin == nil {
+		return errors.New("канал управления процессом закрыт")
+	}
+	_, err := io.WriteString(p.stdin, line+"\n")
+	return err
 }
 
 type Manager struct {
@@ -199,6 +204,7 @@ func (m *Manager) Start(p Profile) error {
 	sort.Slice(m.secrets, func(i, j int) bool { return len(m.secrets[i]) > len(m.secrets[j]) })
 	m.state.Ready = false
 	m.state.IP = ""
+	m.state.SessionStartedAt = 0
 	m.state.Active = 0
 	m.state.Upload = 0
 	m.state.Download = 0
@@ -208,6 +214,11 @@ func (m *Manager) Start(p Profile) error {
 	}
 	m.set("connecting", "Получаю конфигурацию сервера…")
 	m.log("Подключение CSQTT · TURN TCP / 443")
+	if p.InternetMode == "proxy" {
+		m.log("Маршрут в интернет: корпоративный прокси включён.")
+	} else {
+		m.log("Маршрут в интернет: прямой выход; корпоративный прокси отключён.")
+	}
 	return nil
 }
 func (m *Manager) helperLocked() {
@@ -311,7 +322,11 @@ func (m *Manager) consume(session uint64, kind, line string) {
 	}
 	if kind == "helper" && strings.HasPrefix(line, "PROXY_READY") {
 		m.state.Ready = true
+		if m.state.SessionStartedAt == 0 {
+			m.state.SessionStartedAt = time.Now().UnixMilli()
+		}
 		m.set("checking", "Проверяю доступ в интернет…")
+		m.log("Локальный прокси готов. Запускаю автоматическую проверку интернета…")
 		go m.CheckInternet()
 	}
 	if strings.HasPrefix(line, "SYSTEM_PROXY_ERROR") {
@@ -365,6 +380,8 @@ func (m *Manager) Stop() {
 		m.mu.Lock()
 		m.state.Active = 0
 		m.state.Ready = false
+		m.state.IP = ""
+		m.state.SessionStartedAt = 0
 		m.set("offline", "Отключено")
 		m.stopDone = nil
 		m.mu.Unlock()
@@ -395,14 +412,34 @@ func (m *Manager) Recover(tun bool) {
 }
 func (m *Manager) SetSystemProxy(enabled bool) {
 	m.mu.Lock()
+	if enabled {
+		m.profile.SystemProxy = "1"
+	} else {
+		m.profile.SystemProxy = "0"
+	}
 	helper := m.helper
-	m.mu.Unlock()
-	if helper != nil {
-		command := "SYSTEM_PROXY_OFF"
+	command := "SYSTEM_PROXY_OFF"
+	if enabled {
+		command = "SYSTEM_PROXY_ON"
+	}
+	if helper == nil {
+		// The helper may not exist yet while the core is still connecting.
+		// Keep the requested state so helperLocked starts it with the right value.
 		if enabled {
-			command = "SYSTEM_PROXY_ON"
+			m.log("Системный прокси будет включён после готовности локального прокси.")
+		} else {
+			m.log("Системный прокси выключен; настройка учтена до запуска локального прокси.")
 		}
-		go helper.send(command)
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+
+	// Send synchronously so STOP and SYSTEM_PROXY_OFF cannot race on stdin.
+	if err := helper.send(command); err != nil {
+		m.mu.Lock()
+		m.log("Не удалось изменить системный прокси: канал управления недоступен.")
+		m.mu.Unlock()
 	}
 }
 func (m *Manager) CheckInternet() {
@@ -421,9 +458,11 @@ func (m *Manager) CheckInternet() {
 		m.internetChecking = false
 		if e != nil {
 			m.set("unconfirmed", e.Error())
+			m.log("Проверка интернета не пройдена.")
 		} else {
 			m.state.IP = ip
 			m.set("online", "Интернет через CSQTT работает")
+			m.log("Интернет подтверждён через CSQTT.")
 		}
 	}
 	m.mu.Unlock()
