@@ -37,7 +37,7 @@ def main() -> None:
             "udp" -> CsqttConstants.Tunnel.DEFAULT_TURN_TRANSPORT
             else -> AdaptiveTransportPolicy.AUTO
         }"""
-    replace_exact(settings, old_transport_when, new_transport_when, expected=3)
+    replace_exact(settings, old_transport_when, new_transport_when, expected=1)
 
     old_save_transport = """prefs[getProfileKey(TURN_TRANSPORT, profile)] = when (transport) {
                 CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS -> CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS
