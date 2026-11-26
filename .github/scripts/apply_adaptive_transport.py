@@ -50,6 +50,19 @@ def main() -> None:
             }"""
     replace_exact(settings, old_save_transport, new_save_transport)
 
+    replace_exact(
+        settings,
+        """transport = when (prefs[getProfileKey(TURN_TRANSPORT, profile)]) {
+                CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS -> CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS
+                else -> CsqttConstants.Tunnel.DEFAULT_TURN_TRANSPORT
+            },""",
+        """transport = when (prefs[getProfileKey(TURN_TRANSPORT, profile)]) {
+                AdaptiveTransportPolicy.AUTO -> AdaptiveTransportPolicy.AUTO
+                CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS -> CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS
+                else -> CsqttConstants.Tunnel.DEFAULT_TURN_TRANSPORT
+            },""",
+    )
+
     old_export_transport = """tunnel.put("turn_transport", prefs[getProfileKey(TURN_TRANSPORT, p)] ?: CsqttConstants.Tunnel.DEFAULT_TURN_TRANSPORT)"""
     new_export_transport = """tunnel.put("turn_transport", prefs[getProfileKey(TURN_TRANSPORT, p)] ?: AdaptiveTransportPolicy.AUTO)"""
     replace_exact(settings, old_export_transport, new_export_transport)
@@ -143,17 +156,6 @@ internal object AdaptiveTransportPolicy {
     @Volatile
     private var adaptiveTransportAttempt = 0
     private var lastVpnStartAttemptMs = 0L""",
-    )
-
-    replace_exact(
-        manager,
-        """if (event.active > 0) {
-                    wrapAuthTimeoutCount = 0""",
-        """if (event.active > 0) {
-                    if (currentParams?.turnTransport == AdaptiveTransportPolicy.AUTO) {
-                        adaptiveTransportAttempt = 0
-                    }
-                    wrapAuthTimeoutCount = 0""",
     )
 
     replace_exact(
