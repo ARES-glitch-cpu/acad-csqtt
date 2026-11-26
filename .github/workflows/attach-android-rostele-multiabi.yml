@@ -1,0 +1,59 @@
+name: Update Android + Rostele with multi-ABI APKs
+
+on:
+  push:
+    branches:
+      - android/csqttr-2.5.3-getworkers-fix
+    paths:
+      - .github/workflows/attach-android-rostele-multiabi.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  attach:
+    name: Replace Android assets in Android + Rostele
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download successful multi-ABI Android build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "45843447408" --repo "$GITHUB_REPOSITORY" \
+            --name csqttr-2.5.3-getworkers-fix-debug --dir android-artifacts
+
+      - name: Prepare and verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          for apk in app-universal-debug.apk app-arm64-v8a-debug.apk app-armeabi-v7a-debug.apk app-x86_64-debug.apk; do
+            source_file="$(find android-artifacts -type f -name "$apk" -print -quit)"
+            test -n "$source_file" || { echo "Required APK not found: $apk"; exit 1; }
+            cp "$source_file" release-assets/
+          done
+
+          # Refuse to publish an alleged universal APK if it lacks any required Rust ABI.
+          unzip -l release-assets/app-universal-debug.apk > universal-contents.txt
+          grep -q 'lib/arm64-v8a/libclient.so' universal-contents.txt
+          grep -q 'lib/armeabi-v7a/libclient.so' universal-contents.txt
+          grep -q 'lib/x86_64/libclient.so' universal-contents.txt
+
+          (
+            cd release-assets
+            sha256sum *.apk > SHA256SUMS.txt
+          )
+          ls -lh release-assets
+
+      - name: Replace assets in existing Android + Rostele release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-rostele-2.5.3-test.1
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
