@@ -1,15 +1,15 @@
-name: Publish Android + Rostele release
+name: Update Android + Rostele release
 
 on:
   workflow_dispatch:
     inputs:
       android_run_id:
-        description: "Successful Android build workflow run ID"
+        description: "Successful multi-ABI Android build workflow run ID"
         required: true
-        default: "45794454428"
+        default: "45843447408"
         type: string
       tag_name:
-        description: "New Git tag for this release"
+        description: "Existing Android + Rostele release tag to update"
         required: true
         default: "android-rostele-2.5.3-test.1"
         type: string
@@ -20,10 +20,10 @@ permissions:
 
 jobs:
   publish:
-    name: Attach Android APKs
+    name: Update Android APK assets
     runs-on: ubuntu-latest
     steps:
-      - name: Download Android APK artifact
+      - name: Download multi-ABI Android APK artifact
         env:
           GH_TOKEN: ${{ github.token }}
           ANDROID_RUN_ID: ${{ inputs.android_run_id }}
@@ -32,17 +32,23 @@ jobs:
           gh run download "$ANDROID_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name csqttr-2.5.3-getworkers-fix-debug --dir android-artifacts
 
-      - name: Prepare release assets
+      - name: Prepare and verify release assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release-assets
 
-          for apk in app-universal-debug.apk app-arm64-v8a-debug.apk app-armeabi-v7a-debug.apk; do
+          for apk in app-universal-debug.apk app-arm64-v8a-debug.apk app-armeabi-v7a-debug.apk app-x86_64-debug.apk; do
             source_file="$(find android-artifacts -type f -name "$apk" -print -quit)"
             test -n "$source_file" || { echo "Required APK not found: $apk"; exit 1; }
             cp "$source_file" release-assets/
           done
+
+          # Verify the universal APK contains every native Rust ABI we promise.
+          unzip -l release-assets/app-universal-debug.apk > universal-contents.txt
+          grep -q 'lib/arm64-v8a/libclient.so' universal-contents.txt
+          grep -q 'lib/armeabi-v7a/libclient.so' universal-contents.txt
+          grep -q 'lib/x86_64/libclient.so' universal-contents.txt
 
           (
             cd release-assets
@@ -52,31 +58,35 @@ jobs:
           cat > release-notes.md <<'EOF'
           Тестовая Android-сборка CSQTTR 2.5.3 с исправлением согласования количества workers через GETWORKERS.
 
-          **Что приложено:**
-          - универсальная APK;
-          - APK для ARM64 (arm64-v8a);
-          - APK для ARMv7 (armeabi-v7a);
-          - файл SHA256SUMS.txt с контрольными суммами.
+          **Универсальный APK поддерживает три архитектуры:**
+          - ARM64 (arm64-v8a) — современные Android-телефоны;
+          - ARMv7 (armeabi-v7a) — 32-битные ARM-устройства;
+          - x86_64 — BlueStacks и Android-эмуляторы на x86_64.
 
-          **Важно:** это debug-сборка для проверки, подписанная тестовым ключом, а не production-релиз. Она устанавливается отдельно от обычного приложения благодаря суффиксу идентификатора пакета .getworkersfix. Изменения на сервере не требуются.
+          Вложения также включают отдельные APK для каждой архитектуры и SHA256SUMS.txt с контрольными суммами.
+
+          **Важно:** это debug-сборка для тестирования, подписанная тестовым ключом, а не production-релиз. Она устанавливается отдельно от обычного приложения благодаря суффиксу идентификатора пакета .getworkersfix. Изменения на сервере не требуются.
           EOF
 
           ls -lh release-assets
 
-      - name: Create new Android release
+      - name: Confirm target release exists
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ inputs.tag_name }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG_NAME already exists; refusing to overwrite it."
-            exit 1
-          fi
+          gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY"
 
-          gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
-            --title "Android + Rostele" \
-            --notes-file release-notes.md \
-            --prerelease \
-            --target ffacd9eb4a53360bf389acfc2fdc4e8bc58413b7 \
-            release-assets/*
+      - name: Replace Android assets in Android + Rostele release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: Android + Rostele
+          body_path: release-notes.md
+          files: release-assets/*
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
