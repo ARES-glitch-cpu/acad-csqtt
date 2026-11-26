@@ -47,9 +47,17 @@ jobs:
           sudo apt-get install -y build-essential gcc-multilib cmake clang pkg-config
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.97.1
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Verify Rust Android targets
+        run: |
+          rustc --version
+          rustup show active-toolchain
+          rustup target list --installed
+          rustup target list --installed | grep -Fx aarch64-linux-android
+          rustup target list --installed | grep -Fx armv7-linux-androideabi
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
@@ -58,6 +66,7 @@ jobs:
         working-directory: android-client
         run: |
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/28.2.13676358"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           test -d "$ANDROID_NDK_HOME"
           bash rust-client/build_android_wsl.sh arm64-v8a armeabi-v7a
 
