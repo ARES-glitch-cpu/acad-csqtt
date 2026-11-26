@@ -1,0 +1,81 @@
+name: Android CSQTTR GETWORKERS test APK
+
+on:
+  push:
+    branches:
+      - android/csqttr-2.5.3-getworkers-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    name: Build Android APK (ARM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout this build recipe
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned CSQTTR Android source
+        uses: actions/checkout@v4
+        with:
+          repository: Afteroid/csqttr
+          ref: v2.5.3
+          path: android-client
+          persist-credentials: false
+
+      - name: Apply and verify GETWORKERS fix
+        run: python3 .github/scripts/apply_getworkers_fix.py android-client/rust-client/session.rs
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and native build tools
+        run: |
+          sdkmanager 'platforms;android-37' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc-multilib cmake clang pkg-config
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build native ARM libraries
+        working-directory: android-client
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: bash rust-client/build_android_wsl.sh arm64-v8a armeabi-v7a
+
+      - name: Run unit tests and assemble isolated debug APKs
+        working-directory: android-client
+        run: |
+          bash gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon \
+            -Pcsqtt.abis=arm64-v8a,armeabi-v7a \
+            -Pcsqtt.compactApk=true \
+            -Pcsqtt.debugApplicationIdSuffix=.getworkersfix \
+            -Pcsqtt.debugVersionNameSuffix=-getworkers-fix.1 \
+            -Pcsqtt.debugAppLabel=CSQTT-test
+
+      - name: Print APK checksums
+        working-directory: android-client
+        run: sha256sum app/build/outputs/apk/debug/*.apk
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: csqttr-2.5.3-getworkers-fix-debug
+          path: android-client/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
