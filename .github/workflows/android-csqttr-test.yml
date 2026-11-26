@@ -54,9 +54,10 @@ jobs:
 
       - name: Build native ARM libraries
         working-directory: android-client
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-        run: bash rust-client/build_android_wsl.sh arm64-v8a armeabi-v7a
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/28.2.13676358"
+          test -d "$ANDROID_NDK_HOME"
+          bash rust-client/build_android_wsl.sh arm64-v8a armeabi-v7a
 
       - name: Run unit tests and assemble isolated debug APKs
         working-directory: android-client
