@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-android:
-    name: Build Android APK (ARM)
+    name: Build Android APK (ARM + x86_64)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -49,7 +49,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.97.1
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
       - name: Verify Rust Android targets
         run: |
@@ -58,23 +58,24 @@ jobs:
           rustup target list --installed
           rustup target list --installed | grep -Fx aarch64-linux-android
           rustup target list --installed | grep -Fx armv7-linux-androideabi
+          rustup target list --installed | grep -Fx x86_64-linux-android
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
-      - name: Build native ARM libraries
+      - name: Build native ARM and x86_64 libraries
         working-directory: android-client
         run: |
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/28.2.13676358"
           export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           test -d "$ANDROID_NDK_HOME"
-          bash rust-client/build_android_wsl.sh arm64-v8a armeabi-v7a
+          bash rust-client/build_android_wsl.sh arm64-v8a armeabi-v7a x86_64
 
       - name: Run unit tests and assemble isolated debug APKs
         working-directory: android-client
         run: |
           bash gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon \
-            -Pcsqtt.abis=arm64-v8a,armeabi-v7a \
+            -Pcsqtt.abis=arm64-v8a,armeabi-v7a,x86_64 \
             -Pcsqtt.compactApk=true \
             -Pcsqtt.debugApplicationIdSuffix=.getworkersfix \
             -Pcsqtt.debugVersionNameSuffix=-getworkers-fix.1 \
