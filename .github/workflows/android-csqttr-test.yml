@@ -1,9 +1,10 @@
-name: Android CSQTTR GETWORKERS test APK
+name: Android CSQTTR adaptive transport test APK
 
 on:
   push:
     branches:
       - android/csqttr-2.5.3-getworkers-fix
+      - android/csqttr-2.5.3-adaptive-tune
   workflow_dispatch:
 
 permissions:
@@ -11,7 +12,7 @@ permissions:
 
 jobs:
   build-android:
-    name: Build Android APK (ARM + x86_64)
+    name: Build Android APK (ARM + x86_64, adaptive TURN)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -28,6 +29,9 @@ jobs:
 
       - name: Apply and verify GETWORKERS fix
         run: python3 .github/scripts/apply_getworkers_fix.py android-client/rust-client/session.rs
+
+      - name: Apply and verify adaptive TURN transport
+        run: python3 .github/scripts/apply_adaptive_transport.py android-client
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -77,9 +81,9 @@ jobs:
           bash gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon \
             -Pcsqtt.abis=arm64-v8a,armeabi-v7a,x86_64 \
             -Pcsqtt.compactApk=true \
-            -Pcsqtt.debugApplicationIdSuffix=.getworkersfix \
-            -Pcsqtt.debugVersionNameSuffix=-getworkers-fix.1 \
-            -Pcsqtt.debugAppLabel=CSQTT-test
+            -Pcsqtt.debugApplicationIdSuffix=.adaptivetune \
+            -Pcsqtt.debugVersionNameSuffix=-adaptive-tune.1 \
+            -Pcsqtt.debugAppLabel=CSQTT-auto-test
 
       - name: Print APK checksums
         working-directory: android-client
@@ -88,7 +92,7 @@ jobs:
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: csqttr-2.5.3-getworkers-fix-debug
+          name: csqttr-2.5.3-adaptive-transport-debug
           path: android-client/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
