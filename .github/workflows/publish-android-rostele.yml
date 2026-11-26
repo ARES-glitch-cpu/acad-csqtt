@@ -1,0 +1,82 @@
+name: Publish Android + Rostele release
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_run_id:
+        description: "Successful Android build workflow run ID"
+        required: true
+        default: "45794454428"
+        type: string
+      tag_name:
+        description: "New Git tag for this release"
+        required: true
+        default: "android-rostele-2.5.3-test.1"
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Attach Android APKs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Android APK artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_RUN_ID: ${{ inputs.android_run_id }}
+        run: |
+          set -euo pipefail
+          gh run download "$ANDROID_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name csqttr-2.5.3-getworkers-fix-debug --dir android-artifacts
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          for apk in app-universal-debug.apk app-arm64-v8a-debug.apk app-armeabi-v7a-debug.apk; do
+            source_file="$(find android-artifacts -type f -name "$apk" -print -quit)"
+            test -n "$source_file" || { echo "Required APK not found: $apk"; exit 1; }
+            cp "$source_file" release-assets/
+          done
+
+          (
+            cd release-assets
+            sha256sum *.apk > SHA256SUMS.txt
+          )
+
+          cat > release-notes.md <<'EOF'
+          Тестовая Android-сборка CSQTTR 2.5.3 с исправлением согласования количества workers через GETWORKERS.
+
+          **Что приложено:**
+          - универсальная APK;
+          - APK для ARM64 (arm64-v8a);
+          - APK для ARMv7 (armeabi-v7a);
+          - файл SHA256SUMS.txt с контрольными суммами.
+
+          **Важно:** это debug-сборка для проверки, подписанная тестовым ключом, а не production-релиз. Она устанавливается отдельно от обычного приложения благодаря суффиксу идентификатора пакета .getworkersfix. Изменения на сервере не требуются.
+          EOF
+
+          ls -lh release-assets
+
+      - name: Create new Android release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists; refusing to overwrite it."
+            exit 1
+          fi
+
+          gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Android + Rostele" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --target main \
+            release-assets/*
