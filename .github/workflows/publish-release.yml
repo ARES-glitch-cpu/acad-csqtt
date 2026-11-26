@@ -3,6 +3,9 @@ name: Publish existing builds to GitHub Release
 on:
   push:
     branches: ["main"]
+    paths-ignore:
+      - ".github/workflows/publish-release.yml"
+      - ".github/workflows/publish-android-rostele.yml"
   workflow_dispatch:
     inputs:
       tag_name:
