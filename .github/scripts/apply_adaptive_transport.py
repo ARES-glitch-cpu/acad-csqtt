@@ -59,7 +59,8 @@ def main() -> None:
         """transport = when (prefs[getProfileKey(TURN_TRANSPORT, profile)]) {
                 AdaptiveTransportPolicy.AUTO -> AdaptiveTransportPolicy.AUTO
                 CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS -> CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS
-                else -> CsqttConstants.Tunnel.DEFAULT_TURN_TRANSPORT
+                "udp" -> CsqttConstants.Tunnel.DEFAULT_TURN_TRANSPORT
+                else -> AdaptiveTransportPolicy.AUTO
             },""",
     )
 
@@ -68,6 +69,18 @@ def main() -> None:
     replace_exact(settings, old_export_transport, new_export_transport)
 
     v2_settings = root / "app/src/main/java/com/csqtt/client/ui/v2/screens/settings/V2SettingsScreen.kt"
+    replace_exact(
+        v2_settings,
+        """package com.csqtt.client.ui.v2.screens.settings
+
+""",
+        """package com.csqtt.client.ui.v2.screens.settings
+
+import com.csqtt.client.AdaptiveTransportPolicy
+
+""",
+    )
+
     old_transport_key = """fun transportKey(label: String): String = if (label == "TCP") {
         CsqttConstants.Tunnel.TURN_TRANSPORT_TCP_TLS
     } else {
