@@ -78,5 +78,5 @@ jobs:
             --title "Android + Rostele" \
             --notes-file release-notes.md \
             --prerelease \
-            --target main \
+            --target ffacd9eb4a53360bf389acfc2fdc4e8bc58413b7 \
             release-assets/*
