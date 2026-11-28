@@ -7,6 +7,7 @@ import sys
 APP_NAME = "CSQTT"
 ROOT = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets"
+APP_VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 if os.name == "nt":
     CONFIG_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / APP_NAME
     CONFIG_JSON = CONFIG_DIR / "config.json"
