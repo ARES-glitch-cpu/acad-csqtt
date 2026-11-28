@@ -507,6 +507,7 @@ class App:
             or self.current_transport != "udp"
             or self.adaptive_fallback_attempted
             or self.active_workers > 0
+            or self.config is None
             or not self.core_started_at
             or time.monotonic() - self.core_started_at < 30
         ):
