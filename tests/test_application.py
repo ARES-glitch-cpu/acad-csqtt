@@ -35,7 +35,7 @@ class ClientTests(unittest.TestCase):
     def test_direct_mode_omits_corporate_proxy_environment(self):
         profile = self.profile()
         args, env = app.core_command(profile, 9000)
-        self.assertEqual(args[args.index("--turn-transport") + 1], "tcp")
+        self.assertEqual(args[args.index("--turn-transport") + 1], "udp")
         self.assertNotIn("CSQTT_HTTP_PROXY", env)
         self.assertNotIn("CSQTT_PROXY_USER", env)
         self.assertNotIn("CSQTT_PROXY_PASSWORD", env)
