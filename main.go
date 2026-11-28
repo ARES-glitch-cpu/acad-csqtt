@@ -17,6 +17,9 @@ var assets embed.FS
 //go:embed assets/icons/CSQTT.ico
 var trayIcon []byte
 
+//go:embed assets/icons/CS_logo.png
+var trayIconPNG []byte
+
 //go:embed VERSION
 var version string
 
