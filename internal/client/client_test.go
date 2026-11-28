@@ -49,8 +49,17 @@ func TestConfigJSONProfileAndCommandCompatibility(t *testing.T) {
 	if err != nil || p != loaded { t.Fatalf("config roundtrip: %v", err) }
 	data, err := os.ReadFile(configPath)
 	if err != nil { t.Fatal(err) }
-	var decoded Profile
-	if err := json.Unmarshal(data, &decoded); err != nil || decoded != p { t.Fatalf("invalid config.json: %v", err) }
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(data, &decoded); err != nil { t.Fatalf("invalid config.json: %v", err) }
+	var storedPassword string
+	if err := json.Unmarshal(decoded["proxy_password"], &storedPassword); err != nil { t.Fatal(err) }
+	if profileConfigSecretsEncrypted() {
+		if !strings.HasPrefix(storedPassword, "dpapi:") || strings.Contains(string(data), p.ProxyPassword) {
+			t.Fatal("Windows config.json must protect passwords with DPAPI")
+		}
+	} else if storedPassword != p.ProxyPassword {
+		t.Fatal("non-Windows config should retain the password inside owner-only JSON")
+	}
 	args, env, err := CoreCommand(directory, p, 19091)
 	if err != nil { t.Fatal(err) }
 	command := strings.Join(args, " ")
