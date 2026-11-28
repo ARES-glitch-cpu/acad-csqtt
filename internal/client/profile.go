@@ -236,6 +236,10 @@ func LoadProfile(directory string) (Profile, error) {
 	if err = json.Unmarshal([]byte(strings.TrimPrefix(string(data), "\ufeff")), &profile); err != nil {
 		return DefaultProfile(), errors.New("Не удалось прочитать config.json или старый профиль. Исходный файл сохранён.")
 	}
+	profile, err = unprotectProfileSecrets(profile)
+	if err != nil {
+		return DefaultProfile(), fmt.Errorf("не удалось расшифровать секреты config.json: %w", err)
+	}
 	if migrate && configErr == nil {
 		if err := SaveProfile(directory, profile, true); err != nil {
 			return profile, fmt.Errorf("профиль прочитан, но миграция в config.json не удалась: %w", err)
