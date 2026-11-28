@@ -16,6 +16,7 @@ import shutil
 import sys
 import uuid
 import time
+import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -168,7 +169,35 @@ class App:
         return "break"
 
     def profile(self):
-        return Profile(**{**{k: v.get() for k, v in self.vars.items()}, "hashes": self.hashes.get("1.0", "end").strip()})
+        values = {k: v.get() for k, v in self.vars.items()}
+        values["hashes"] = self.hashes.get("1.0", "end").strip()
+        if hasattr(self, "ui"):
+            if hasattr(self.ui, "route_domains"):
+                values["direct_domains"] = self.ui.route_domains.get("1.0", "end").strip()
+            if hasattr(self.ui, "route_ips"):
+                values["direct_ips"] = self.ui.route_ips.get("1.0", "end").strip()
+        return Profile(**values)
+
+    def open_panel(self):
+        address = self.vars.get("panel_url").get().strip() if self.vars.get("panel_url") else ""
+        try:
+            profile = self.profile()
+            profile.validate()
+            if not profile.panel_url.strip():
+                raise ValueError("Укажите ссылку веб-панели в разделе «Деплой».")
+            webbrowser.open(profile.panel_url.strip(), new=2)
+            self.append("[ПАНЕЛЬ] Открываю веб-панель сервера в браузере.")
+        except Exception as error:
+            messagebox.showerror("Веб-панель", str(error), parent=self.root)
+
+    def copy_panel_url(self):
+        address = self.vars.get("panel_url").get().strip() if self.vars.get("panel_url") else ""
+        if not address:
+            messagebox.showwarning("Веб-панель", "Сначала укажите ссылку веб-панели.", parent=self.root)
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(address)
+        self.append("[ПАНЕЛЬ] Ссылка на веб-панель скопирована.")
 
     def append(self, message):
         # Core messages can contain partial hashes; mask these as well as passwords.
