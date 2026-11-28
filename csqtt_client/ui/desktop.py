@@ -53,8 +53,11 @@ class DesktopUI:
         tk.Label(rail, image=self.rail_logo, bg=PANEL).pack(fill="x", pady=(8, 18))
         self.nav = {}
         self.nav_images = {}
-        for key, text, icon in (("connection", "Туннель", "connection"),
-                                ("settings", "Опции", "settings"), ("logs", "Журнал", "logs")):
+        for key, text, icon in (("connection", "Подключение", "connection"),
+                                ("settings", "Туннель", "settings"),
+                                ("routing", "Роутинг", "routing"),
+                                ("deploy", "Деплой", "deploy"),
+                                ("logs", "Журнал", "logs")):
             self.nav_images[key] = (self.icon(icon), self.icon(icon, "#25262b"))
             button = ttk.Button(rail, text=text, image=self.nav_images[key][0], compound="none",
                                 style="Nav.TButton", command=lambda k=key: self.show_page(k), takefocus=True)
@@ -123,6 +126,8 @@ class DesktopUI:
         self.pages.columnconfigure(0, weight=1)
         self.connection_page(profile)
         self.settings_page()
+        self.routing_page(profile)
+        self.deploy_page(profile)
         self.logs_page()
         self.show_page("connection")
         self.apply_role("Администратор")
@@ -528,13 +533,36 @@ class DesktopUI:
         )
         label(transport.body, tun_help, color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(7, 4))
         self.field(transport.body, "Потоки · workers", "workers")
-        for title, key, values in (("Обфускация", "obfs", ("unified", "audio", "video")),
-                                   ("SRTP", "srtp", ("auto", "wrap", "dtls"))):
+
+        label(transport.body, "Транспорт TURN", size=9, color=MUTED).pack(anchor="w", pady=(14, 5))
+        self.transport_choice = tk.StringVar(value={"auto": "Авто", "udp": "UDP", "tcp": "TCP"}.get(self.app.vars["turn_transport"].get(), "Авто"))
+        transport_box = ttk.Combobox(transport.body, textvariable=self.transport_choice,
+                                     values=("Авто", "UDP", "TCP"), state="readonly")
+        transport_box.pack(fill="x")
+        def update_transport(_event=None):
+            self.app.vars["turn_transport"].set({"Авто": "auto", "UDP": "udp", "TCP": "tcp"}[self.transport_choice.get()])
+        transport_box.bind("<<ComboboxSelected>>", update_transport)
+        update_transport()
+
+        for title, key, values, labels in (
+            ("Маскировка · SRTP", "srtp", ("auto", "wrap", "dtls"), ("Авто", "WRAP-SRTP", "DTLS-SRTP")),
+            ("TLS-отпечаток", "fingerprint", ("chrome", "firefox", "edge", "opera", "safari"), ("Chrome", "Firefox", "Edge", "Opera", "Safari")),
+            ("Метод капчи", "captcha_mode", ("auto", "wv", "rjs"), ("Авто", "WebView", "Rust JS")),
+        ):
             label(transport.body, title, size=9, color=MUTED).pack(anchor="w", pady=(14, 5))
-            ttk.Combobox(transport.body, textvariable=self.app.vars[key], values=values, state="readonly").pack(fill="x")
+            display = tk.StringVar(value=labels[values.index(self.app.vars[key].get())] if self.app.vars[key].get() in values else labels[0])
+            picker = ttk.Combobox(transport.body, textvariable=display, values=labels, state="readonly")
+            picker.pack(fill="x")
+            def apply_choice(_event=None, key=key, values=values, labels=labels, display=display):
+                self.app.vars[key].set(values[labels.index(display.get())])
+            picker.bind("<<ComboboxSelected>>", apply_choice)
+            apply_choice()
+
+        self.field(transport.body, "TLS Client IDs (через запятую)", "client_ids")
         self.field(transport.body, "TURN-хост · необязательно", "turn")
+        self.field(transport.body, "TURN IP / адреса с портами (необязательно)", "custom_turn_ips")
         self.field(transport.body, "DNS-сервер (переопределение)", "dns_override")
-        label(transport.body, "Пустое поле — DNS сервера. При заполнении используется указанный IP в TUN.", color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(6, 0))
+        label(transport.body, "Пустое поле — DNS сервера. TURN IP не задавайте произвольно: адреса должны соответствовать выданным VK учётным данным.", color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(6, 0))
         right = frame(body)
         right.grid(row=0, column=1, sticky="new")
         ports = self.section(right, "Локальные порты", "Доступны только на этом компьютере: 127.0.0.1.")
@@ -546,6 +574,100 @@ class DesktopUI:
         self.field(session.body, "Поколение", "generation")
         self.field(session.body, "Salt", "salt", secret=True)
         self.adapt_columns(body, transport, right, "settings")
+
+    def routing_page(self, profile):
+        body = self.page_frame("routing")
+        body.columnconfigure(0, weight=1, uniform="routing")
+        body.columnconfigure(1, weight=1, uniform="routing")
+
+        domains = self.section(
+            body,
+            "Маршрутизация по доменам",
+            "Чёрный список — эти домены идут напрямую, остальные через CSQTT. Белый список — только указанные домены через CSQTT, остальные напрямую.",
+        )
+        domains.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        self.domain_enabled = ttk.Checkbutton(
+            domains.body, text="Включить правила доменов",
+            variable=self.app.vars["domain_routing_enabled"], onvalue="1", offvalue="0",
+        )
+        self.domain_enabled.pack(anchor="w", pady=(6, 8))
+        domain_mode = tk.StringVar(value="Белый список" if profile.domain_is_whitelist == "1" else "Чёрный список")
+        domain_box = ttk.Combobox(domains.body, textvariable=domain_mode,
+                                  values=("Чёрный список", "Белый список"), state="readonly")
+        domain_box.pack(fill="x", pady=(0, 8))
+        domain_box.bind("<<ComboboxSelected>>", lambda _e: self.app.vars["domain_is_whitelist"].set(
+            "1" if domain_mode.get() == "Белый список" else "0"))
+        self.app.vars["domain_is_whitelist"].set("1" if domain_mode.get() == "Белый список" else "0")
+        self.route_domains = self.text(domains.body, height=10, expand=True)
+        self.route_domains.surface.pack(fill="both", expand=True)
+        self.route_domains.insert("1.0", profile.direct_domains)
+        label(domains.body, "По одному на строку: vk.com, example.org", size=8, color=DIM).pack(anchor="w", pady=(7, 0))
+        ttk.Checkbutton(
+            domains.body, text="Исключать зоны RU / SU / РФ (только для чёрного списка)",
+            variable=self.app.vars["exclude_ru_zones"], onvalue="1", offvalue="0",
+        ).pack(anchor="w", pady=(9, 0))
+        ttk.Checkbutton(
+            domains.body, text="Использовать шаблонные домены",
+            variable=self.app.vars["template_domains"], onvalue="1", offvalue="0",
+        ).pack(anchor="w", pady=(6, 0))
+
+        ips = self.section(
+            body,
+            "Маршрутизация по IP",
+            "Поддерживаются IPv4, CIDR и диапазоны адресов.",
+        )
+        ips.grid(row=0, column=1, sticky="nsew")
+        ttk.Checkbutton(
+            ips.body, text="Включить правила IP",
+            variable=self.app.vars["ip_routing_enabled"], onvalue="1", offvalue="0",
+        ).pack(anchor="w", pady=(6, 8))
+        ip_mode = tk.StringVar(value="Белый список" if profile.ip_is_whitelist == "1" else "Чёрный список")
+        ip_box = ttk.Combobox(ips.body, textvariable=ip_mode,
+                              values=("Чёрный список", "Белый список"), state="readonly")
+        ip_box.pack(fill="x", pady=(0, 8))
+        ip_box.bind("<<ComboboxSelected>>", lambda _e: self.app.vars["ip_is_whitelist"].set(
+            "1" if ip_mode.get() == "Белый список" else "0"))
+        self.app.vars["ip_is_whitelist"].set("1" if ip_mode.get() == "Белый список" else "0")
+        self.route_ips = self.text(ips.body, height=10, expand=True)
+        self.route_ips.surface.pack(fill="both", expand=True)
+        self.route_ips.insert("1.0", profile.direct_ips)
+        label(ips.body, "Примеры: 1.1.1.1 · 10.0.0.0/8 · 192.0.2.1-192.0.2.25",
+              size=8, color=DIM).pack(anchor="w", pady=(7, 0))
+
+        info = self.section(
+            body,
+            "Применение правил",
+            "Правила передаются непосредственно Rust-ядру CSQTT и применяются к системному TUN. Для локального режима SOCKS5/HTTP маршрутизация ОС не меняется.",
+        )
+        info.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+        label(info.body, "Изменения вступят в силу при следующем подключении.",
+              color=MUTED, size=9).pack(anchor="w")
+
+    def deploy_page(self, profile):
+        body = self.page_frame("deploy")
+        panel = self.section(
+            body,
+            "Управление сервером CSQTT",
+            "Веб-панель сервера позволяет управлять пользователями, паролями, хешами звонков, лимитами и ссылками подключения.",
+        )
+        panel.pack(fill="x")
+        self.field(panel.body, "Ссылка веб-панели", "panel_url")
+        actions = frame(panel.body)
+        actions.pack(fill="x", pady=(12, 0))
+        ttk.Button(actions, text="Открыть веб-панель", command=self.app.open_panel).pack(side="left")
+        ttk.Button(actions, text="Копировать ссылку", command=self.app.copy_panel_url).pack(side="left", padx=8)
+
+        limits = self.section(
+            body,
+            "Что доступно в этой настольной сборке",
+            "Подключение к существующему серверу, импорт профиля, работа с потоками, TURN, TUN, DNS, правила доменов и IP, проверка интернета и экспорт журнала.",
+        )
+        limits.pack(fill="x", pady=(14, 0))
+        label(
+            limits.body,
+            "Полный SSH-деплой из Android-приложения (установка, обновление, переустановка и удаление серверной части) пока не перенесён в Windows/Linux-оболочку. Здесь не показываются фиктивные кнопки установки: используйте веб-панель либо SSH-инструменты администратора.",
+            color=AMBER, size=9, wraplength=700, justify="left",
+        ).pack(fill="x", pady=(4, 0))
 
     def adapt_columns(self, body, left, right, group, remember=None):
         previous = None
@@ -590,7 +712,7 @@ class DesktopUI:
         if key == self.page:
             return
         self.page = key
-        for name in ("connection", "settings", "logs"):
+        for name in ("connection", "settings", "routing", "deploy", "logs"):
             page = getattr(self, name)
             if not hasattr(page, "focus_targets"):
                 page.focus_targets = []
@@ -609,9 +731,13 @@ class DesktopUI:
         focused = self.root.focus_get()
         if focused and str(focused).startswith(str(self.pages)) and not str(focused).startswith(str(getattr(self, key))):
             self.nav[key].focus_set()
-        titles = {"connection": ("Подключение", "Интернет через ваш сервер csqtt и корпоративный прокси."),
-                  "settings": ("Параметры", "Транспорт, локальные порты и параметры сессии."),
-                  "logs": ("Журнал", "События ядра, состояние туннеля и диагностика.")}
+        titles = {
+            "connection": ("Подключение", "Профили, сервер CSQTT, VK-хеши и способ выхода в интернет."),
+            "settings": ("Туннель", "Режим TUN или прокси, транспорт TURN, маскировка и параметры сессии."),
+            "routing": ("Роутинг", "Маршрутизация IPv4 и доменов через туннель или напрямую."),
+            "deploy": ("Деплой", "Веб-панель и управление существующим сервером CSQTT."),
+            "logs": ("Журнал", "Состояние ядра, потоки, трафик и диагностика подключения."),
+        }
         title, subtitle = titles[key]
         self.heading.configure(text=title)
         self.subtitle.configure(text=subtitle)
