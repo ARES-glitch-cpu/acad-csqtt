@@ -44,6 +44,8 @@ type Profile struct {
 	ClientIDs     string `json:"client_ids"`
 	CaptchaMode   string `json:"captcha_mode"`
 	CustomTurnIPs string `json:"custom_turn_ips"`
+	TurnSubnet    string `json:"turn_subnet"`
+	TurnIPLimit   string `json:"turn_ip_limit"`
 	DomainRouting bool   `json:"domain_routing"`
 	ExcludeRUZones bool  `json:"exclude_ru_zones"`
 	TemplateDomains bool `json:"template_domains"`
@@ -55,7 +57,7 @@ type Profile struct {
 }
 
 func DefaultProfile() Profile {
-	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0", TurnTransport: "tcp", GoobyStrategy: "current", Fingerprint: "chrome", VkAuthMode: "vkcalls", CaptchaMode: "auto"}
+	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0", TurnTransport: "tcp", GoobyStrategy: "current", Fingerprint: "chrome", VkAuthMode: "vkcalls", CaptchaMode: "auto", TurnIPLimit: "ALL"}
 }
 
 var separators = regexp.MustCompile(`[\s,;]+`)
@@ -169,6 +171,7 @@ func (p Profile) Validate() ([]string, error) {
 	if p.Gooby && (transport != "tcp" || p.InternetMode == "proxy") {
 		return nil, errors.New("Gooby доступен только при прямом подключении через TURN TCP.")
 	}
+	if _, e := ResolveTurnSubnet(p.TurnSubnet, p.TurnIPLimit); e != nil { return nil, e }
 	if p.GoobyStrategy != "" && p.GoobyStrategy != "current" && p.GoobyStrategy != "gentle" && p.GoobyStrategy != "extended" {
 		return nil, errors.New("Выберите стратегию Gooby: current, gentle или extended.")
 	}
@@ -279,8 +282,13 @@ func CoreCommand(directory string, p Profile, port int) ([]string, []string, err
 	if strings.TrimSpace(p.ClientIDs) != "" {
 		args = append(args, "--client-ids", strings.TrimSpace(p.ClientIDs))
 	}
-	if strings.TrimSpace(p.CustomTurnIPs) != "" {
-		args = append(args, "--custom-turn-ips", strings.TrimSpace(p.CustomTurnIPs))
+	turnIPs := strings.TrimSpace(p.CustomTurnIPs)
+	if turnIPs == "" {
+		turnIPs, err = ResolveTurnSubnet(p.TurnSubnet, p.TurnIPLimit)
+		if err != nil { return nil, nil, err }
+	}
+	if turnIPs != "" {
+		args = append(args, "--custom-turn-ips", turnIPs)
 	}
 	if strings.TrimSpace(p.Turn) != "" {
 		args = append(args, "--turn", strings.TrimSpace(p.Turn))
