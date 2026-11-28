@@ -315,6 +315,7 @@ func parseDeployInventory(output string) (*DeployInventory, error) {
 }
 
 func versionAtLeast25(raw string) bool {
+	raw = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "v"))
 	parts := strings.Split(raw, ".")
 	if len(parts) < 2 { return false }
 	major, _ := strconv.Atoi(parts[0])
