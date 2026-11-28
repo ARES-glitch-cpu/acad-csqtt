@@ -247,7 +247,22 @@
       {#if proxyMessage}<p class="feedback" class:success={proxyOK} role="status">{proxyMessage}</p>{/if}
      </section>
      <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol violet"><Icon name="settings" size={18}/></span><div><h3>Туннель и транспорт</h3><p>Параметры ядра, маскировки и TURN.</p></div></div>
-      <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'workers',label:'Количество потоков'},{key:'turn_transport',label:'Транспорт TURN',options:['udp','tcp']},{key:'obfs',label:'Обфускация',options:['unified','audio','video']},{key:'srtp',label:'Режим SRTP',options:['auto','wrap','dtls']},{key:'turn',label:'TURN-хост',hint:'Необязательно · домен или IP без порта'},{key:'custom_turn_ips',label:'Пользовательские TURN-IP',hint:'Список IP:порт через запятую, только адреса из доверенного пула VK.'},{key:'dns',label:'DNS-серверы IPv4',hint:'Через запятую. Пустое значение — DNS сервера.'}]}/>
+      <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'workers',label:'Количество потоков'},{key:'turn_transport',label:'Транспорт TURN',options:['udp','tcp']},{key:'obfs',label:'Обфускация',options:['unified','audio','video']},{key:'srtp',label:'Режим SRTP',options:['auto','wrap','dtls']},{key:'turn',label:'TURN-хост',hint:'Необязательно · домен или IP без порта'},{key:'custom_turn_ips',label:'Пользовательские TURN-IP',hint:'Свой список имеет приоритет над выбранной подсетью.'},{key:'dns',label:'DNS-серверы IPv4',hint:'Через запятую. Пустое значение — DNS сервера.'}]}/>
+      <label class="field"><span>Готовая TURN-подсеть VK</span>
+       <select disabled={running||!!profile.custom_turn_ips.trim()} bind:value={profile.turn_subnet} on:change={dirty}>
+        <option value="">Авто · адреса из ответа VK</option>
+        <option value="95.163.34.0/24">95.163.34.0/24</option>
+        <option value="91.231.135.0/24">91.231.135.0/24</option>
+        <option value="90.156.232.0/21">90.156.232.0/21</option>
+        <option value="193.203.43.0/24">193.203.43.0/24</option>
+        <option value="185.180.200.0/22">185.180.200.0/22</option>
+       </select><small>Пустой выбор оставляет адреса, выданные VK. Случайные публичные TURN-серверы не используются.</small>
+      </label>
+      <label class="field"><span>Количество TURN-IP</span>
+       <select disabled={running||!profile.turn_subnet||!!profile.custom_turn_ips.trim()} bind:value={profile.turn_ip_limit} on:change={dirty}>
+        <option value="ALL">Все адреса</option><option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="9">9</option>
+       </select>
+      </label>
      </section>
      <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol cyan"><Icon name="shield" size={18}/></span><div><h3>Gooby · маскировка TCP</h3><p>Встроенный SOCKS5 движок Android 2.5.3, только для прямого TCP/TLS.</p></div></div>
       <label class="save-toggle"><input type="checkbox" checked={profile.gooby} disabled={running||profile.turn_transport!=='tcp'||profile.internet_mode==='proxy'} on:change={e=>{profile.gooby=e.currentTarget.checked;dirty();}}/><span><b>Включить Gooby</b><small>Нельзя использовать с UDP или корпоративным HTTP CONNECT.</small></span></label>
