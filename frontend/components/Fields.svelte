@@ -1,10 +1,11 @@
 <script lang="ts">
  import type { Profile } from '../types';
+ type StringKey = { [K in keyof Profile]: Profile[K] extends string ? K : never }[keyof Profile];
  export let profile:Profile;
- export let fields:{key:keyof Profile;label:string;secret?:boolean;hint?:string;options?:string[]}[]=[];
+ export let fields:{key:StringKey;label:string;secret?:boolean;hint?:string;options?:string[]}[]=[];
  export let changed:()=>void=()=>{};
  export let disabled=false;
- let revealed:Partial<Record<keyof Profile,boolean>>={};
+ let revealed:Partial<Record<StringKey,boolean>>={};
 </script>
 {#each fields as field}
  <label class="field"><span>{field.label}</span><div class="input-row">
