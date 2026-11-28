@@ -14,6 +14,7 @@ from unittest.mock import patch
 from csqtt_client import application as app
 from csqtt_client.models.profile import normalize_hashes
 from csqtt_client.platform.windows import profiles
+from csqtt_client.platform.linux import profiles as linux_profiles
 
 
 class ClientTests(unittest.TestCase):
@@ -69,21 +70,62 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(profiles.dpapi(encrypted, decrypt=True), plain)
 
     @unittest.skipUnless(os.name == "nt", "Windows DPAPI")
-    def test_legacy_profile_load_save_and_forget(self):
+    def test_windows_config_json_protects_secrets_and_roundtrips(self):
         with tempfile.TemporaryDirectory() as directory:
-            legacy = app.Path(directory) / "old/profile.dat"
-            current = app.Path(directory) / "new/profile.dat"
-            with patch.object(profiles, "PROFILE", legacy), patch.object(profiles, "LEGACY_PROFILE", current):
+            folder = app.Path(directory) / "CSQTT"
+            config = folder / "config.json"
+            with patch.object(profiles, "CONFIG_DIR", folder), patch.object(profiles, "CONFIG_JSON", config), \
+                 patch.object(profiles, "PROFILE", folder / "profile.dat"), \
+                 patch.object(profiles, "LEGACY_PROFILE", folder / "old-profile.dat"):
                 profiles.save_profile(self.profile())
-            with patch.object(profiles, "PROFILE", current), patch.object(profiles, "LEGACY_PROFILE", legacy):
+                raw = config.read_text(encoding="utf-8")
+                self.assertNotIn("server-test-secret", raw)
+                self.assertNotIn("proxy-test-secret", raw)
                 self.assertEqual(profiles.load_profile(), self.profile())
                 self.assertTrue(profiles.profile_exists())
-                profiles.save_profile(profiles.load_profile())
-                self.assertTrue(current.exists())
-                self.assertFalse(legacy.exists())
-                self.assertEqual(profiles.load_profile(), self.profile())
                 profiles.delete_profile()
                 self.assertFalse(profiles.profile_exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows DPAPI")
+    def test_windows_migrates_legacy_dpapi_profile_to_config_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = app.Path(directory) / "CSQTT"
+            config = folder / "config.json"
+            legacy = folder / "profile.dat"
+            with patch.object(profiles, "CONFIG_DIR", folder), patch.object(profiles, "CONFIG_JSON", config), \
+                 patch.object(profiles, "PROFILE", legacy), patch.object(profiles, "LEGACY_PROFILE", folder / "old-profile.dat"):
+                folder.mkdir(parents=True)
+                legacy.write_bytes(profiles.dpapi(json.dumps(app.asdict(self.profile())).encode("utf-8")))
+                self.assertEqual(profiles.load_profile(), self.profile())
+                self.assertTrue(config.exists())
+
+    def test_linux_config_json_roundtrips_with_owner_only_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = app.Path(directory) / "CSQTT"
+            config = folder / "config.json"
+            with patch.object(linux_profiles, "CONFIG_DIR", folder), patch.object(linux_profiles, "CONFIG_JSON", config), \
+                 patch.object(linux_profiles, "PROFILE", folder / "profile.json"), \
+                 patch.object(linux_profiles, "LEGACY_PROFILE", folder / "profile-legacy.json"):
+                linux_profiles.save_profile(self.profile())
+                raw = config.read_text(encoding="utf-8")
+                self.assertIn("server-test-secret", raw)
+                self.assertEqual(linux_profiles.load_profile(), self.profile())
+                self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(folder.stat().st_mode & 0o777, 0o700)
+                linux_profiles.delete_profile()
+
+    def test_linux_migrates_legacy_profile_json_to_config_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = app.Path(directory) / "CSQTT"
+            config = folder / "config.json"
+            legacy = folder / "profile.json"
+            with patch.object(linux_profiles, "CONFIG_DIR", folder), patch.object(linux_profiles, "CONFIG_JSON", config), \
+                 patch.object(linux_profiles, "PROFILE", legacy), patch.object(linux_profiles, "LEGACY_PROFILE", folder / "profile-legacy.json"):
+                folder.mkdir(parents=True)
+                legacy.write_text(json.dumps(app.asdict(self.profile())), encoding="utf-8")
+                self.assertEqual(linux_profiles.load_profile(), self.profile())
+                self.assertTrue(config.exists())
+                self.assertEqual(config.stat().st_mode & 0o777, 0o600)
 
     def fake_proxy(self, status):
         listener = socket.socket()
