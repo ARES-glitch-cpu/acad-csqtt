@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sync"
 	"time"
+	"runtime"
 
 	"github.com/getlantern/systray"
 )
@@ -24,6 +25,8 @@ func New(_ []byte, iconPNG []byte, onOpen, onExit func()) (*Tray, error) {
 	t := &Tray{onOpen: onOpen, onExit: onExit, done: make(chan struct{})}
 	ready := make(chan struct{})
 	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
 		defer close(t.done)
 		systray.Run(func() {
 			systray.SetIcon(iconPNG)
