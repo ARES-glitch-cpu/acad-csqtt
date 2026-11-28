@@ -38,6 +38,10 @@ class Profile:
     ip_is_whitelist: str = "0"
     direct_ips: str = ""
     panel_url: str = ""
+    fingerprint: str = "chrome"
+    captcha_mode: str = "auto"
+    client_ids: str = "8202606,6287487"
+    custom_turn_ips: str = ""
 
     def validate(self):
         host, port = split_address(self.server)
@@ -88,6 +92,37 @@ class Profile:
             raise ValueError("Неверный режим протокола.")
         if self.turn_transport not in ("auto", "udp", "tcp"):
             raise ValueError("Транспорт TURN должен быть Авто, UDP или TCP.")
+        if self.fingerprint not in ("chrome", "firefox", "edge", "opera", "safari"):
+            raise ValueError("Неизвестный TLS-отпечаток браузера.")
+        if self.captcha_mode not in ("auto", "wv", "rjs"):
+            raise ValueError("Метод обработки капчи должен быть Авто, WebView или Rust JS.")
+        if not self.client_ids.strip() or any(not item.strip().isdigit() for item in self.client_ids.split(",")):
+            raise ValueError("Client IDs должны содержать числовые идентификаторы через запятую.")
+        if self.custom_turn_ips.strip():
+            for endpoint in re.split(r"[,;\\s]+", self.custom_turn_ips.strip()):
+                endpoint = endpoint.strip()
+                if not endpoint:
+                    continue
+                if endpoint.startswith("[") and "]:" in endpoint:
+                    host, port = endpoint[1:].split("]:", 1)
+                    ipaddress.IPv6Address(host)
+                    if not 1 <= int(port) <= 65535:
+                        raise ValueError(f"Некорректный TURN-порт: {port}")
+                elif endpoint.count(":") == 1:
+                    host, port = endpoint.rsplit(":", 1)
+                    try:
+                        ipaddress.ip_address(host)
+                    except ValueError:
+                        if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+                            raise ValueError(f"Некорректный TURN-адрес: {endpoint}") from None
+                    if not 1 <= int(port) <= 65535:
+                        raise ValueError(f"Некорректный TURN-порт: {port}")
+                else:
+                    try:
+                        ipaddress.ip_address(endpoint)
+                    except ValueError:
+                        if not re.fullmatch(r"[A-Za-z0-9.-]+", endpoint):
+                            raise ValueError(f"Некорректный TURN-адрес: {endpoint}") from None
         if self.internet_mode == "proxy" and self.turn_transport == "udp":
             raise ValueError("При корпоративном HTTP-прокси UDP недоступен. Выберите Авто или TCP.")
         for key in ("domain_routing_enabled", "domain_is_whitelist", "exclude_ru_zones",
