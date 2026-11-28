@@ -207,28 +207,33 @@ func (a *App) ExportLog() error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\r\n")), 0600)
 }
 func (a *App) HideToTray() error {
-	if a.tray.Load() == nil {
-		return errors.New("Трей недоступен. Окно оставлено открытым.")
+	icon := a.tray.Load()
+	if icon == nil {
+		return errors.New("Системный трей недоступен. Окно не будет скрыто.")
 	}
-	if err := a.tray.Load().Hide(); err != nil { return err }
-	if a.ctx != nil { runtime.WindowHide(a.ctx) }
+	if err := icon.Hide(); err != nil { return err }
+	// Windows tray.Hide intercepts the native Wails HWND itself. Linux keeps
+	// the StatusNotifier icon visible and hides the Wails window via runtime.
+	if goruntime.GOOS == "linux" && a.ctx != nil {
+		runtime.WindowHide(a.ctx)
+	}
 	return nil
 }
 func (a *App) restoreWindow() {
-	if icon := a.tray.Load(); icon != nil {
-		icon.Show()
-	} else if a.ctx != nil {
-		runtime.WindowShow(a.ctx)
+	if goruntime.GOOS == "windows" {
+		if icon := a.tray.Load(); icon != nil { icon.Show(); return }
 	}
+	if a.ctx != nil { runtime.WindowShow(a.ctx) }
 }
 func (a *App) beforeClose(context.Context) bool {
 	if goruntime.GOOS != "windows" && goruntime.GOOS != "linux" {
 		return false
 	}
-	if a.exiting.Load() {
+	if a.exiting.Load() { return false }
+	if err := a.HideToTray(); err != nil {
+		// If the tray could not start, do not trap the user in an unclosable window.
 		return false
 	}
-	_ = a.HideToTray()
 	return true
 }
 func (a *App) Quit() {
