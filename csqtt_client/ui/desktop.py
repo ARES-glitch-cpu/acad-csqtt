@@ -44,7 +44,7 @@ class DesktopUI:
         self.chrome = WindowChrome(root, scale)
         self.title_bar(version)
 
-        sidebar = Panel(root, padding=9, radius=24, stretch=True, width=max(86, int(68 * scale)))
+        sidebar = Panel(root, padding=9, radius=24, stretch=True, width=max(106, int(88 * scale)))
         sidebar.pack(side="left", fill="y", padx=(18, 0), pady=18)
         sidebar.pack_propagate(False)
         rail = sidebar.body
@@ -53,15 +53,16 @@ class DesktopUI:
         tk.Label(rail, image=self.rail_logo, bg=PANEL).pack(fill="x", pady=(8, 18))
         self.nav = {}
         self.nav_images = {}
-        for key, text, icon in (("connection", "Подключение", "connection"),
+        for key, text, icon in (("connection", "Подкл.", "connection"),
                                 ("settings", "Туннель", "settings"),
                                 ("routing", "Роутинг", "routing"),
                                 ("deploy", "Деплой", "deploy"),
                                 ("logs", "Журнал", "logs")):
             self.nav_images[key] = (self.icon(icon), self.icon(icon, "#25262b"))
-            button = ttk.Button(rail, text=text, image=self.nav_images[key][0], compound="none",
-                                style="Nav.TButton", command=lambda k=key: self.show_page(k), takefocus=True)
-            button.pack(pady=6)
+            button = ttk.Button(rail, text=text, image=self.nav_images[key][0], compound="top",
+                                width=9, style="Nav.TButton",
+                                command=lambda k=key: self.show_page(k), takefocus=True)
+            button.pack(fill="x", pady=6)
             self.tooltip(button, text)
             self.nav[key] = button
         label(rail, f"v{version}", size=8, color=DIM, anchor="center").pack(side="bottom", fill="x", pady=(8, 2))
@@ -235,6 +236,20 @@ class DesktopUI:
             for y, x in ((16, 17), (33, 31)):
                 draw.line((7, y, 41, y), fill=color, width=3)
                 draw.line((x, y-7, x, y+7), fill=color, width=4)
+        elif name == "routing":
+            draw.ellipse((6, 7, 18, 19), outline=color, width=3)
+            draw.ellipse((30, 7, 42, 19), outline=color, width=3)
+            draw.ellipse((18, 30, 30, 42), outline=color, width=3)
+            draw.line((17, 15, 31, 15), fill=color, width=3)
+            draw.line((14, 18, 22, 31), fill=color, width=3)
+            draw.line((34, 18, 26, 31), fill=color, width=3)
+        elif name == "deploy":
+            draw.rounded_rectangle((7, 9, 41, 39), radius=4, outline=color, width=3)
+            draw.line((13, 17, 35, 17), fill=color, width=3)
+            draw.line((13, 25, 27, 25), fill=color, width=3)
+            draw.line((13, 33, 22, 33), fill=color, width=3)
+            draw.line((31, 29, 37, 29), fill=color, width=3)
+            draw.line((34, 25, 38, 29, 34, 33), fill=color, width=3)
         else:
             draw.rounded_rectangle((10, 6, 38, 42), radius=3, outline=color, width=3)
             for y in (16, 24, 32):
@@ -443,6 +458,12 @@ class DesktopUI:
                 if "hashes" in data:
                     self.app.hashes.delete("1.0", "end")
                     self.app.hashes.insert("1.0", str(data["hashes"]))
+                if hasattr(self, "route_domains") and "direct_domains" in data:
+                    self.route_domains.delete("1.0", "end")
+                    self.route_domains.insert("1.0", str(data["direct_domains"] or ""))
+                if hasattr(self, "route_ips") and "direct_ips" in data:
+                    self.route_ips.delete("1.0", "end")
+                    self.route_ips.insert("1.0", str(data["direct_ips"] or ""))
                 self.apply_role("Администратор")
             elif "csqtt://" in raw:
                 link = next((line.strip() for line in raw.splitlines() if "csqtt://" in line), raw.strip())
