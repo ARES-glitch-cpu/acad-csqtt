@@ -257,3 +257,7 @@ input:focus,textarea:focus,select:focus{border-color:#69bd9e;background:#121e27}
 .progress-track{height:5px;margin-top:10px;border-radius:10px;background:#2b3e3b;overflow:hidden}
 .progress-track i{display:block;height:100%;border-radius:10px;background:linear-gradient(90deg,#4cba94,#9af3ce);transition:width .25s ease}
 @media(max-width:700px){.deploy-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.deploy-action-card{align-items:flex-start;flex-direction:column}.deploy-action-card .secondary-button{width:100%}.deploy-secrets{grid-template-columns:1fr}}
+
+.config-file-path{background:#121f29;border-color:#344b59;color:#98bdcb}
+.config-file-path span{overflow-wrap:anywhere;user-select:text}
+.profile-file-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
