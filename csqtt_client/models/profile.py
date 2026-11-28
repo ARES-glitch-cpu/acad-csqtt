@@ -37,6 +37,7 @@ class Profile:
     ip_routing_enabled: str = "0"
     ip_is_whitelist: str = "0"
     direct_ips: str = ""
+    panel_url: str = ""
 
     def validate(self):
         host, port = split_address(self.server)
@@ -76,6 +77,11 @@ class Profile:
                 raise ValueError("Пользовательский DNS должен быть IP-адресом, например 1.1.1.1 или 9.9.9.9.")
         if self.auto_load_config not in ("0", "1"):
             raise ValueError("Флаг автозагрузки конфигурации некорректен.")
+        if self.panel_url.strip():
+            from urllib.parse import urlsplit
+            parsed = urlsplit(self.panel_url.strip())
+            if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError("Ссылка веб-панели должна иметь вид https://домен/путь без логина и пароля.")
         if self.mode not in ("proxy", "tun"):
             raise ValueError("Режим подключения должен быть proxy или tun.")
         if self.obfs not in ("unified", "audio", "video") or self.srtp not in ("auto", "wrap", "dtls"):
