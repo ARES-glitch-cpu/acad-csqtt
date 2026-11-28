@@ -4,7 +4,7 @@ interface Backend {
  SetSystemProxy(enabled:boolean):Promise<void>;CheckProxy(p:Profile):Promise<void>;CheckInternet():Promise<void>;CheckUpdates():Promise<void>;OpenUpdate():Promise<void>;ExportLog():Promise<void>;HideToTray():Promise<void>;Quit():Promise<void>;
  InspectDeployServer():Promise<DeployResult>;
  TrustDeployHostKey(fingerprint:string):Promise<void>;
- StartDeploy(actionID:string):Promise<void>;
+ StartDeploy(actionID:string,confirmation:string):Promise<void>;
 }
 declare global{interface Window{go?:{main?:{App?:Backend}}}}
 export function backend():Backend {const b=window.go?.main?.App;if(!b)throw new Error('Запустите CSQTT.exe или wails dev.');return b;}
