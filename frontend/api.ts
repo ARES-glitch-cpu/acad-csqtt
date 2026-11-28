@@ -2,6 +2,7 @@ import type { Initial, Profile, State, DeployResult } from './types';
 interface Backend {
  Initial():Promise<Initial>;SetDraft(p:Profile,remember:boolean):Promise<void>;SaveProfile(p:Profile,remember:boolean):Promise<void>;Connect():Promise<State>;Disconnect():Promise<State>;
  SetSystemProxy(enabled:boolean):Promise<void>;CheckProxy(p:Profile):Promise<void>;CheckInternet():Promise<void>;CheckUpdates():Promise<void>;OpenUpdate():Promise<void>;ExportLog():Promise<void>;HideToTray():Promise<void>;Quit():Promise<void>;
+ ConfigPath():Promise<string>;ExportProfile():Promise<void>;ImportProfile():Promise<Profile>;OpenConfigFolder():Promise<void>;
  InspectDeployServer():Promise<DeployResult>;
  TrustDeployHostKey(fingerprint:string):Promise<void>;
  StartDeploy(actionID:string,confirmation:string):Promise<void>;
