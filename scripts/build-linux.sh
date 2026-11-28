@@ -28,7 +28,7 @@ install -m 0755 core/rust-client/target/release/client bin/csqtt-core
 )
 chmod 0755 bin/csqtt-core bin/packet-proxy
 
-python -m PyInstaller --noconfirm --clean --onedir --windowed --hidden-import=PIL._tkinter_finder --name CSQTT main.py
+python -m PyInstaller --noconfirm --clean --onedir --windowed --hidden-import=PIL._tkinter_finder --collect-submodules=pystray --collect-submodules=Xlib --name CSQTT main.py
 PACKAGE="$ROOT_DIR/dist/CSQTT"
 mkdir -p "$PACKAGE"
 cp -a bin "$PACKAGE/"
