@@ -28,6 +28,9 @@
     alert: 'm12 3 10 18H2z M12 9v4 M12 16v1',
     copy: 'M9 9h12v12H9z M15 5V3H3v12h2',
     download: 'M12 3v12 m-5-5 5 5 5-5 M4 16v5h16v-5',
+    upload: 'M12 21V9 m-5 5 5-5 5 5 M4 8V3h16v5',
+    'file-json': 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h8',
+    'folder-open': 'M3 5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v2H5a2 2 0 0 0-2 2z M3 11a2 2 0 0 1 2-2h16l-2 9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
     help: 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3 M12 17v1',
   };
 </script>
