@@ -91,6 +91,10 @@
    finally{action=false;}
  }
  async function mode(key:keyof Profile,value:string){
+   if(key==='internet_mode'&&value==='proxy'){
+     profile.gooby=false;
+     profile.turn_transport='tcp';
+   }
    profile[key]=value;
    dirty();
    if(key==='system_proxy'){
@@ -251,14 +255,14 @@
       <div class="config-path"><Icon name="info" size={15}/><span>Gooby обрабатывает только начальные TCP/TLS-пакеты соединения. Уже установленный трафик не изменяется.</span></div>
      </section>
      <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol violet"><Icon name="fingerprint" size={18}/></span><div><h3>Параметры VK и TLS</h3><p>Совместимость аутентификации и TLS ClientHello.</p></div></div>
-      <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'fingerprint',label:'TLS Client fingerprint',options:['chrome','safari','firefox','edge','opera']},{key:'vk_auth_mode',label:'Авторизация VK',options:['vkcalls','auto_js']},{key:'captcha_mode',label:'Обработка капчи',options:['auto','rjs','wv']},{key:'client_ids',label:'Дополнительные Client IDs',hint:'Необязательно · значения через запятую'}]}/>
+      <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'fingerprint',label:'TLS Client fingerprint',options:['chrome','safari','firefox','edge','opera']},{key:'vk_auth_mode',label:'Авторизация VK',options:['vkcalls']},{key:'captcha_mode',label:'Обработка капчи',options:['auto','rjs','wv']},{key:'client_ids',label:'Дополнительные Client IDs',hint:'Необязательно · значения через запятую'}]}/>
      </section>
      <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol amber"><Icon name="monitor" size={18}/></span><div><h3>Локальные порты</h3><p>Адреса прокси, доступных на этом компьютере.</p></div></div>
       <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'socks_port',label:'Порт SOCKS5'},{key:'http_port',label:'Порт HTTP'},{key:'generation',label:'Поколение'},{key:'salt',label:'Salt',secret:true}]}/>
      </section>
      <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol"><Icon name="shield" size={18}/></span><div><h3>Хранение профиля</h3><p>Сохранение параметров на этом компьютере.</p></div></div>
       <label class="save-toggle"><input type="checkbox" bind:checked={remember} on:change={dirty}/><span><b>Запоминать настройки</b><small>Пароли и параметры будут восстановлены при следующем запуске.</small></span></label>
-      <div class="config-path"><Icon name="check" size={15}/><span>Изменения записываются автоматически в профиль CSQTT.</span></div>
+      <div class="config-path"><Icon name="check" size={15}/><span>Изменения записываются автоматически в пользовательский config.json (папка CSQTT).</span></div>
      </section>
      <section class="settings-card update-card"><div class="settings-card-head"><span class="settings-symbol cyan"><Icon name="refresh" size={18}/></span><div><h3>Обновления</h3><p>Текущая версия v{version}</p></div></div>
       <button class="secondary-button" disabled={state.updateChecking} on:click={()=>void checkUpdates().catch(e=>error=String(e))}><Icon name="refresh" size={15}/>{state.updateChecking?'Проверяю…':'Проверить обновления'}</button>
