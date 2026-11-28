@@ -211,6 +211,30 @@ class LogExportTests(unittest.TestCase):
         self.assertEqual(self.ui.log.get("sel.first", "sel.last"), self.expected)
         self.assertEqual(self.ui.log.cget("state"), "disabled")
 
+    def test_json_autosave_snapshot_includes_fields_and_text_routes(self):
+        self.ui.vars["server"].set("203.0.113.8:46000")
+        self.ui.vars["password"].set("autosave-secret")
+        self.ui.hashes.insert("1.0", "call-hash-001")
+        self.ui.route_domains.insert("1.0", "example.com\\n*.example.net")
+        self.ui.route_ips.insert("1.0", "203.0.113.10/32")
+        expected = self.ui.profile()
+        self.assertEqual(expected.server, "203.0.113.8:46000")
+        self.assertEqual(expected.password, "autosave-secret")
+        self.assertEqual(expected.hashes, "call-hash-001")
+        self.assertEqual(expected.direct_domains, "example.com\\n*.example.net")
+        self.assertEqual(expected.direct_ips, "203.0.113.10/32")
+        with patch.object(app, "save_profile") as save:
+            self.assertTrue(self.ui.save_profile_config_now())
+            save.assert_called_once_with(expected)
+
+    def test_minimize_hides_window_when_tray_is_ready(self):
+        import types
+        ready = threading.Event()
+        ready.set()
+        self.ui.tray = types.SimpleNamespace(ready=ready)
+        self.ui.hide_to_tray()
+        self.assertEqual(self.root.state(), "withdrawn")
+
     def test_save_masked_utf8_log(self):
         with tempfile.TemporaryDirectory() as directory:
             filename = app.Path(directory) / "журнал.txt"
