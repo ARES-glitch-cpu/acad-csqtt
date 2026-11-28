@@ -28,6 +28,15 @@ class Profile:
     dns_override: str = ""
     config_file: str = ""
     auto_load_config: str = "0"
+    turn_transport: str = "auto"
+    domain_routing_enabled: str = "0"
+    domain_is_whitelist: str = "0"
+    exclude_ru_zones: str = "0"
+    template_domains: str = "0"
+    direct_domains: str = ""
+    ip_routing_enabled: str = "0"
+    ip_is_whitelist: str = "0"
+    direct_ips: str = ""
 
     def validate(self):
         host, port = split_address(self.server)
@@ -71,6 +80,42 @@ class Profile:
             raise ValueError("Режим подключения должен быть proxy или tun.")
         if self.obfs not in ("unified", "audio", "video") or self.srtp not in ("auto", "wrap", "dtls"):
             raise ValueError("Неверный режим протокола.")
+        if self.turn_transport not in ("auto", "udp", "tcp"):
+            raise ValueError("Транспорт TURN должен быть Авто, UDP или TCP.")
+        if self.internet_mode == "proxy" and self.turn_transport == "udp":
+            raise ValueError("При корпоративном HTTP-прокси UDP недоступен. Выберите Авто или TCP.")
+        for key in ("domain_routing_enabled", "domain_is_whitelist", "exclude_ru_zones",
+                    "template_domains", "ip_routing_enabled", "ip_is_whitelist"):
+            if getattr(self, key) not in ("0", "1"):
+                raise ValueError("Параметры маршрутизации имеют неверный формат.")
+        domains = [item for item in re.split(r"[\\s,;]+", self.direct_domains.strip()) if item]
+        if self.domain_routing_enabled == "1" and not domains and self.exclude_ru_zones != "1" and self.template_domains != "1":
+            raise ValueError("Включена маршрутизация доменов, но список доменов пуст.")
+        for domain in domains:
+            candidate = domain.strip().lower()
+            if candidate.startswith(("http://", "https://")):
+                candidate = candidate.split("://", 1)[1]
+            candidate = candidate.split("/", 1)[0].split(":", 1)[0].strip(".")
+            if not candidate or len(candidate) > 253 or not re.fullmatch(r"[a-z0-9.-]+", candidate):
+                raise ValueError(f"Некорректный домен в списке маршрутизации: {domain}")
+            if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+                   for label in candidate.split(".")):
+                raise ValueError(f"Некорректный домен в списке маршрутизации: {domain}")
+        ip_tokens = [item for item in re.split(r"[\\s,;]+", self.direct_ips.strip()) if item]
+        if self.ip_routing_enabled == "1" and not ip_tokens:
+            raise ValueError("Включена маршрутизация IP, но список адресов пуст.")
+        for token in ip_tokens:
+            try:
+                if "/" in token:
+                    ipaddress.IPv4Network(token, strict=False)
+                elif "-" in token:
+                    first, last = token.split("-", 1)
+                    if int(ipaddress.IPv4Address(first)) > int(ipaddress.IPv4Address(last)):
+                        raise ValueError
+                else:
+                    ipaddress.IPv4Address(token)
+            except ValueError:
+                raise ValueError(f"Некорректное IPv4-правило: {token}. Используйте IP, CIDR или диапазон.") from None
         return hashes
 
 
