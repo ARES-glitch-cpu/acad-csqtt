@@ -28,6 +28,7 @@
  let saveRevision=0;
  let saveChain=Promise.resolve();
  let logBox:HTMLDivElement;
+ let configPath='';
  let deployResult:DeployResult|null=null;
  let deployBusy=false;
  let deployProgress:DeployProgress={percent:0,message:'Готов к проверке',done:false,success:false};
@@ -58,6 +59,7 @@
    void backend().Initial().then(data=>{
      if(disposed)return;
      profile=data.profile;
+     void backend().ConfigPath().then(path=>{if(!disposed)configPath=path;}).catch(()=>{});
      accept(data.state);
      error=data.error;
      loading=false;
@@ -140,6 +142,23 @@
  async function copyLogs(){
    try{await navigator.clipboard.writeText(state.logs.map(l=>l.time+' '+l.message).join('\\n'));}
    catch{error='Не удалось скопировать журнал. Используйте экспорт.';}
+ }
+ async function exportProfile(){
+   if(!window.confirm('JSON-экспорт содержит пароли, хеши и SSH-ключи в открытом виде. Храните файл как пароль. Продолжить?'))return;
+   try{await flush();await backend().ExportProfile();saveMessage='Профиль экспортирован';}
+   catch(e){error=String(e);}
+ }
+ async function importProfile(){
+   if(!window.confirm('Импорт заменит текущие настройки CSQTT. Продолжить?'))return;
+   try{
+     const imported=await backend().ImportProfile();
+     profile=imported;remember=true;saveRevision=0;saveMessage='Профиль импортирован';
+     dirty();await flush();
+   }catch(e){error=String(e);}
+ }
+ async function openConfigFolder(){
+   try{await backend().OpenConfigFolder();}
+   catch(e){error=String(e);}
  }
  async function hide(){
    try{await flush();await backend().HideToTray();}
@@ -344,7 +363,13 @@
      </section>
      <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol"><Icon name="shield" size={18}/></span><div><h3>Хранение профиля</h3><p>Сохранение параметров на этом компьютере.</p></div></div>
       <label class="save-toggle"><input type="checkbox" bind:checked={remember} on:change={dirty}/><span><b>Запоминать настройки</b><small>Пароли и параметры будут восстановлены при следующем запуске.</small></span></label>
-      <div class="config-path"><Icon name="check" size={15}/><span>Изменения записываются автоматически в пользовательский config.json (папка CSQTT).</span></div>
+      <div class="config-path"><Icon name="check" size={15}/><span>Изменения записываются автоматически в пользовательский config.json.</span></div>
+       <div class="config-path config-file-path"><Icon name="file-json" size={15}/><span>{configPath||'Путь к config.json загружается…'}</span></div>
+       <div class="profile-file-actions">
+        <button class="secondary-button" on:click={()=>void exportProfile()}><Icon name="download" size={15}/>Экспорт JSON</button>
+        <button class="secondary-button" on:click={()=>void importProfile()}><Icon name="upload" size={15}/>Импорт JSON</button>
+        <button class="secondary-button" on:click={()=>void openConfigFolder()}><Icon name="folder-open" size={15}/>Папка настроек</button>
+       </div></span></div>
      </section>
      <section class="settings-card update-card"><div class="settings-card-head"><span class="settings-symbol cyan"><Icon name="refresh" size={18}/></span><div><h3>Обновления</h3><p>Текущая версия v{version}</p></div></div>
       <button class="secondary-button" disabled={state.updateChecking} on:click={()=>void checkUpdates().catch(e=>error=String(e))}><Icon name="refresh" size={15}/>{state.updateChecking?'Проверяю…':'Проверить обновления'}</button>
