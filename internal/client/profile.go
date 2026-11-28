@@ -170,7 +170,7 @@ func (p Profile) Validate() ([]string, error) {
 	if p.GoobyStrategy != "" && p.GoobyStrategy != "current" && p.GoobyStrategy != "gentle" && p.GoobyStrategy != "extended" {
 		return nil, errors.New("Выберите стратегию Gooby: current, gentle или extended.")
 	}
-	if p.VkAuthMode != "" && p.VkAuthMode != "vkcalls" && p.VkAuthMode != "auto_js" {
+	if p.VkAuthMode != "" && p.VkAuthMode != "vkcalls" {
 		return nil, errors.New("Неизвестный режим VK авторизации.")
 	}
 	if p.Fingerprint != "" && p.Fingerprint != "chrome" && p.Fingerprint != "safari" && p.Fingerprint != "firefox" && p.Fingerprint != "edge" && p.Fingerprint != "opera" {
