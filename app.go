@@ -57,6 +57,10 @@ func (a *App) startup(ctx context.Context) {
 	if !a.smoke {
 		if icon, e := tray.New(trayIcon, trayIconPNG, a.restoreWindow, a.Quit); e == nil {
 			a.tray.Store(icon)
+		} else {
+			a.mu.Lock()
+			a.loadError = "Системный трей недоступен: " + e.Error()
+			a.mu.Unlock()
 		}
 	}
 }
