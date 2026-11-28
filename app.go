@@ -55,7 +55,7 @@ func NewApp(directory, version string, smoke bool) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	if !a.smoke {
-		if icon, e := tray.New(trayIcon, a.Quit); e == nil {
+		if icon, e := tray.New(trayIcon, trayIconPNG, a.restoreWindow, a.Quit); e == nil {
 			a.tray.Store(icon)
 		}
 	}
@@ -199,10 +199,12 @@ func (a *App) ExportLog() error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\r\n")), 0600)
 }
 func (a *App) HideToTray() error {
-	if icon := a.tray.Load(); icon != nil {
-		return icon.Hide()
+	if a.tray.Load() == nil {
+		return errors.New("Трей недоступен. Окно оставлено открытым.")
 	}
-	return errors.New("Трей недоступен. Окно оставлено открытым.")
+	if err := a.tray.Load().Hide(); err != nil { return err }
+	if a.ctx != nil { runtime.WindowHide(a.ctx) }
+	return nil
 }
 func (a *App) restoreWindow() {
 	if icon := a.tray.Load(); icon != nil {
@@ -212,7 +214,7 @@ func (a *App) restoreWindow() {
 	}
 }
 func (a *App) beforeClose(context.Context) bool {
-	if goruntime.GOOS != "windows" {
+	if goruntime.GOOS != "windows" && goruntime.GOOS != "linux" {
 		return false
 	}
 	if a.exiting.Load() {
