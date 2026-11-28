@@ -388,7 +388,12 @@ class DesktopUI:
             ttk.Button(row, text="Копировать", command=lambda k=key, t=kind: self.copy_endpoint(k, t)).pack(side="right")
             self.app.vars[key].trace_add("write", lambda *args: self.update_endpoints())
         self.update_endpoints()
-        config_group = self.section(server.body, "Конфигурация", "Можно импортировать TXT, JSON-профиль или ссылку csqtt:// из файла. Автозагрузка использует указанный файл при запуске.")
+        from csqtt_client.config import CONFIG_JSON
+        config_group = self.section(
+            server.body,
+            "Конфигурация",
+            "Настройки автоматически сохраняются в отдельный config.json. Импортируйте готовый профиль или экспортируйте резервную копию для другого компьютера.",
+        )
         config_group.pack(fill="x", pady=(14, 0))
         self.app.vars["config_file"] = tk.StringVar(value=self.app.vars["config_file"].get())
         config_row = frame(config_group.body)
@@ -396,12 +401,19 @@ class DesktopUI:
         config_entry = ttk.Entry(config_row, textvariable=self.app.vars["config_file"], width=1)
         config_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(config_row, text="Выбрать…", command=self.select_config_file).pack(side="right", padx=(8, 0))
-        ttk.Button(config_group.body, text="Импортировать сейчас", command=self.import_config_file).pack(anchor="w", pady=(8, 0))
-        auto_load = ttk.Checkbutton(config_group.body, text="Автоматически загружать файл при запуске", variable=self.app.vars["auto_load_config"], onvalue="1", offvalue="0")
+        controls = frame(config_group.body)
+        controls.pack(fill="x", pady=(8, 0))
+        ttk.Button(controls, text="Импортировать", command=self.import_config_file).pack(side="left")
+        ttk.Button(controls, text="Экспорт JSON…", command=self.app.export_profile_json).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="Папка config.json", command=self.app.open_config_folder).pack(side="left", padx=(8, 0))
+        label(
+            config_group.body,
+            f"Постоянный файл: {CONFIG_JSON}",
+            color=DIM, size=8, wraplength=680, justify="left",
+        ).pack(anchor="w", pady=(9, 0))
+        auto_load = ttk.Checkbutton(config_group.body, text="Дополнительно загружать внешний файл при запуске", variable=self.app.vars["auto_load_config"], onvalue="1", offvalue="0")
         auto_load.pack(anchor="w", pady=(8, 0))
-        remember = ttk.Checkbutton(body, text="Запомнить профиль на этом компьютере", variable=self.app.remember)
-        remember.grid(row=1, column=0, columnspan=2, sticky="w", pady=(12, 0))
-        self.adapt_columns(body, server, side, "connection", remember)
+        self.adapt_columns(body, server, side, "connection")
 
     def change_role(self, _event=None):
         selected = self.role_choice.get()
