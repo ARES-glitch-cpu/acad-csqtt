@@ -42,6 +42,8 @@ class Profile:
     captcha_mode: str = "auto"
     client_ids: str = "8202606,6287487"
     custom_turn_ips: str = ""
+    turn_subnet: str = ""
+    turn_ip_limit: str = "ALL"
 
     def validate(self):
         host, port = split_address(self.server)
@@ -98,6 +100,11 @@ class Profile:
             raise ValueError("Метод обработки капчи должен быть Авто, WebView или Rust JS.")
         if not self.client_ids.strip() or any(not item.strip().isdigit() for item in self.client_ids.split(",")):
             raise ValueError("Client IDs должны содержать числовые идентификаторы через запятую.")
+        from csqtt_client.models.turn_subnets import subnet_titles, TURN_IP_LIMITS
+        if self.turn_subnet and self.turn_subnet not in subnet_titles():
+            raise ValueError("Выберите TURN-подсеть из списка или оставьте автоматический выбор VK.")
+        if self.turn_ip_limit not in TURN_IP_LIMITS:
+            raise ValueError("Количество TURN-IP должно быть: Все, 1, 2, 4 или 9.")
         if self.custom_turn_ips.strip():
             for endpoint in re.split(r"[,;\s]+", self.custom_turn_ips.strip()):
                 endpoint = endpoint.strip()
