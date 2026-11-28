@@ -564,6 +564,11 @@ class DesktopUI:
             self.app.vars["turn_transport"].set({"Авто": "auto", "UDP": "udp", "TCP": "tcp"}[self.transport_choice.get()])
         transport_box.bind("<<ComboboxSelected>>", update_transport)
         update_transport()
+        label(
+            transport.body,
+            "Авто: сначала UDP при прямом подключении, затем TCP после 30 секунд без рабочих потоков и получения TURN-кредов. Через корпоративный HTTP CONNECT сразу используется TCP :443.",
+            color=DIM, size=8, wraplength=500, justify="left",
+        ).pack(fill="x", pady=(6, 0))
 
         for title, key, values, labels in (
             ("Маскировка · SRTP", "srtp", ("auto", "wrap", "dtls"), ("Авто", "WRAP-SRTP", "DTLS-SRTP")),
