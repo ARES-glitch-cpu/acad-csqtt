@@ -253,6 +253,8 @@ func SaveProfile(directory string, profile Profile, remember bool) error {
 		return forgetLegacy()
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil { return err }
+	profile, err = protectProfileSecrets(profile)
+	if err != nil { return fmt.Errorf("не удалось защитить секреты config.json: %w", err) }
 	data, err := json.MarshalIndent(profile, "", "  ")
 	if err != nil { return err }
 	temp := path + ".tmp"
