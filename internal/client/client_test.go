@@ -83,6 +83,39 @@ func TestConfigJSONProfileAndCommandCompatibility(t *testing.T) {
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) { t.Fatal("config.json not removed") }
 }
 
+func TestVKTurnSubnetPresetsAndLimits(t *testing.T) {
+	one, err := ResolveTurnSubnet("95.163.34.0/24", "1")
+	if err != nil || one != "95.163.34.48" { t.Fatalf("first candidate: %q, %v", one, err) }
+	nine, err := ResolveTurnSubnet("91.231.135.0/24", "9")
+	if err != nil || len(strings.Split(nine, ",")) != 9 { t.Fatalf("nine candidates: %q, %v", nine, err) }
+	all, err := ResolveTurnSubnet("193.203.43.0/24", "ALL")
+	if err != nil || len(strings.Split(all, ",")) != 47 { t.Fatalf("all candidates: got %d, err=%v", len(strings.Split(all, ",")), err) }
+	auto, err := ResolveTurnSubnet("", "ALL")
+	if err != nil || auto != "" { t.Fatalf("empty subnet must defer to VK response: %q, %v", auto, err) }
+	if _, err := ResolveTurnSubnet("95.163.34.0/24", "3"); err == nil { t.Fatal("unsupported IP limit accepted") }
+	if _, err := ResolveTurnSubnet("203.0.113.0/24", "ALL"); err == nil { t.Fatal("untrusted subnet accepted") }
+}
+
+func TestManualTurnIPsOverrideSubnetPreset(t *testing.T) {
+	p := valid()
+	p.CustomTurnIPs = "192.0.2.10:443,192.0.2.11:443"
+	p.TurnSubnet = "95.163.34.0/24"
+	p.TurnIPLimit = "1"
+	args, _, err := CoreCommand(t.TempDir(), p, 19091)
+	if err != nil { t.Fatal(err) }
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--custom-turn-ips 192.0.2.10:443,192.0.2.11:443") || strings.Contains(joined, "95.163.34.48") {
+		t.Fatalf("manual IP list must override subnet preset: %s", joined)
+	}
+	p.CustomTurnIPs = ""
+	args, _, err = CoreCommand(t.TempDir(), p, 19091)
+	if err != nil { t.Fatal(err) }
+	joined = strings.Join(args, " ")
+	if !strings.Contains(joined, "95.163.34.48") || strings.Count(joined, "95.163.34.") != 1 {
+		t.Fatalf("subnet and limit not applied: %s", joined)
+	}
+}
+
 func TestUpdateOpensReleasePageAndRejectsUntrustedAssets(t *testing.T) {
 	tag := "v1.4.2"
 	asset := map[string]string{"name": "CSQTT-" + tag + "-Win10-x64.zip", "state": "uploaded", "browser_download_url": "https://github.com/" + repository + "/releases/download/" + tag + "/CSQTT-" + tag + "-Win10-x64.zip"}
