@@ -387,11 +387,11 @@ func makeDeployPlan(inv *DeployInventory, p client.Profile, appVersion string) d
 		}
 	}
 	if standard == nil && side == nil {
-		peer,web,err:=uniqueDeployPorts(p)
-		if err!=nil { plan.Notes=append(plan.Notes,err.Error()) } else {
-			if foreign {
-				add(DeployAction{ID:"install-side",Kind:"install",Instance:"side",Title:"Установить отдельный экземпляр",Detail:"Новый экземпляр будет установлен рядом с обнаруженным сервером, не затрагивая его.",PeerPort:46100,WebPort:46102})
-			} else {
+		if foreign || p.DeployInstance == "side" {
+			add(DeployAction{ID:"install-side",Kind:"install",Instance:"side",Title:"Установить отдельный экземпляр",Detail:"Новый экземпляр будет установлен на отдельные порты 46100/46102, не затрагивая основной сервер.",PeerPort:46100,WebPort:46102})
+		} else {
+			peer,web,err:=uniqueDeployPorts(p)
+			if err!=nil { plan.Notes=append(plan.Notes,err.Error()) } else {
 				if len(leftovers)>0 { plan.Notes=append(plan.Notes,"Найдены остатки прежней установки: "+strings.Join(leftovers,", ")+".") }
 				add(DeployAction{ID:"install-main",Kind:"install",Instance:"main",Title:"Установить CSQTT",Detail:fmt.Sprintf("Установить сервер v%s на UDP %d и WEB %d.",appVersion,peer,web),PeerPort:peer,WebPort:web})
 			}
@@ -498,6 +498,13 @@ func (a *App) executeDeploy(actionID string) error {
 	for i:=range result.Actions { if result.Actions[i].ID==actionID { action=&result.Actions[i]; break } }
 	if action==nil { return errors.New("это действие больше не разрешено результатом проверки. Обновите инвентаризацию") }
 	p:=a.currentDeployProfile()
+	if action.Kind=="update" && result.Inventory!=nil {
+		for _,server:=range result.Inventory.Servers {
+			if (action.Instance=="main" && server.Place=="standard") || (action.Instance=="side" && server.Place=="side") {
+				if server.Runtime=="docker" { p.DeployMode="docker" } else if server.Runtime=="systemd" { p.DeployMode="systemd" }
+			}
+		}
+	}
 	sshClient,presented,err:=connectDeploySSH(p)
 	if presented!="" && presented!=p.DeployHostKey { return errors.New("SSH host key изменился после проверки. Подтвердите новый отпечаток") }
 	if err!=nil { return err }
