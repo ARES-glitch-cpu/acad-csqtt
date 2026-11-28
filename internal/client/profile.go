@@ -218,7 +218,7 @@ func LoadProfile(directory string) (Profile, error) {
 	if err != nil {
 		return profile, err
 	}
-	if err = json.Unmarshal([]byte(strings.TrimPrefix(string(data), "\\ufeff")), &profile); err != nil {
+	if err = json.Unmarshal([]byte(strings.TrimPrefix(string(data), "\ufeff")), &profile); err != nil {
 		return DefaultProfile(), errors.New("Не удалось прочитать config.json или старый профиль. Исходный файл сохранён.")
 	}
 	if migrate && configErr == nil {
@@ -242,7 +242,7 @@ func SaveProfile(directory string, profile Profile, remember bool) error {
 	if err != nil { return err }
 	temp := path + ".tmp"
 	defer os.Remove(temp)
-	if err = os.WriteFile(temp, append(data, '\\n'), 0600); err != nil { return err }
+	if err = os.WriteFile(temp, append(data, '\n'), 0600); err != nil { return err }
 	if runtime.GOOS != "windows" {
 		if err = os.Chmod(temp, 0600); err != nil { return err }
 	}
