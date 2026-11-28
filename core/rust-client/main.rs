@@ -10,6 +10,7 @@ mod dns;
 #[path = "../shared/dtls.rs"]
 pub mod dtls;
 mod events;
+mod gooby;
 mod http_proxy;
 mod logging;
 mod namegen;
@@ -112,6 +113,12 @@ struct Arguments {
     obfs: String,
     #[arg(long, default_value = "udp")]
     turn_transport: String,
+    /// Enable the bundled Gooby engine for TURN TCP/TLS only.
+    #[arg(long, default_value_t = false)]
+    gooby: bool,
+    /// Gooby initial connection setup strategy: current, gentle or extended.
+    #[arg(long, default_value = "current")]
+    gooby_strategy: String,
     #[arg(long, default_value = "auto")]
     srtp_mode: String,
     #[arg(long = "gen", default_value_t = 0)]
@@ -241,10 +248,40 @@ async fn run(arguments: Arguments) -> Result<i32> {
     if password.is_empty() {
         bail!("[КЛИЕНТ] Нужен пароль в переменной CSQTT_PASSWORD");
     }
+    let _embedded_gooby = if arguments.gooby {
+        let preset: csqtt_gooby::Preset = arguments.gooby_strategy.parse()
+            .map_err(anyhow::Error::msg)?;
+        crate::log_error!("[GOOBY] Запуск встроенного движка, стратегия={}", preset.name());
+        let bundle = csqtt_gooby::ConfigBundle::builtin_turn()?.with_preset(preset);
+        Some(csqtt_gooby::Runtime::start_with_observer(
+            bundle,
+            true,
+            Some(Arc::new(move |event| {
+                let message = match event {
+                    csqtt_gooby::StrategyEvent::TurnAllocateSplit => "Разделение TURN Allocate применено",
+                    csqtt_gooby::StrategyEvent::TlsClientHelloSplit => "Разделение TLS ClientHello применено",
+                    csqtt_gooby::StrategyEvent::Passthrough => "Пакет передан без изменения",
+                };
+                crate::log_error!("[GOOBY] {message}; стратегия={}", preset.name());
+            })),
+        ).await.context("запуск встроенного Gooby")?)
+    } else { None };
+    let gooby_proxy = _embedded_gooby.as_ref().map(|runtime| {
+        runtime.address().to_string().parse::<gooby::GoobyProxy>()
+    }).transpose()?;
+    if gooby_proxy.is_some() {
+        crate::log_error!("[GOOBY] Локальный движок готов: {}", gooby_proxy.unwrap());
+    }
     let mut stdin = spawn_stdin_reader();
     let peer = resolve_peer(&arguments.peer).await?;
     let mode = ObfsMode::parse(&arguments.obfs)?;
     let turn_transport = TurnTransportMode::parse(&arguments.turn_transport)?;
+    if arguments.gooby && turn_transport == TurnTransportMode::Udp {
+        bail!("[КЛИЕНТ] Gooby доступен только с TCP/TLS TURN");
+    }
+    if arguments.gooby && http_proxy::configured() {
+        bail!("[КЛИЕНТ] Встроенный Gooby нельзя одновременно использовать с корпоративным HTTP CONNECT");
+    }
     if http_proxy::configured() && turn_transport == TurnTransportMode::Udp {
         bail!("HTTP proxy mode requires --turn-transport tcp; UDP fallback is disabled");
     }
@@ -371,6 +408,7 @@ async fn run(arguments: Arguments) -> Result<i32> {
         turn_port: (!arguments.port.is_empty()).then(|| Arc::from(arguments.port.as_str())),
         turn_ip_pool,
         turn_transport,
+        gooby_proxy,
         srtp_mode,
         hashes: hashes.into(),
         wrap_key,
