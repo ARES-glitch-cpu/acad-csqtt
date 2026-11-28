@@ -55,7 +55,7 @@ if (Test-Path -LiteralPath $packageDir) {
 }
 & python scripts\prepare_icon.py
 if ($LASTEXITCODE -ne 0) { throw 'Icon preparation failed' }
-& python -m PyInstaller --noconfirm --onedir --windowed --name CSQTT --icon assets\icons\CSQTT.ico main.py
+& python -m PyInstaller --noconfirm --onedir --windowed --name CSQTT --icon assets\icons\CSQTT.ico --collect-submodules=pystray main.py
 if ($LASTEXITCODE -ne 0) { throw 'GUI build failed' }
 Copy-Item -LiteralPath bin -Destination $packageDir -Recurse -Force
 Copy-Item -LiteralPath "$packageDir\_internal\VCRUNTIME140.dll" -Destination "$packageDir\bin\VCRUNTIME140.dll" -Force
