@@ -581,9 +581,36 @@ class DesktopUI:
 
         self.field(transport.body, "TLS Client IDs (через запятую)", "client_ids")
         self.field(transport.body, "TURN-хост · необязательно", "turn")
-        self.field(transport.body, "TURN IP / адреса с портами (необязательно)", "custom_turn_ips")
+
+        from csqtt_client.models.turn_subnets import subnet_titles
+        label(transport.body, "TURN подсеть", size=9, color=MUTED).pack(anchor="w", pady=(14, 5))
+        subnet_labels = ("Авто · адреса из ответа VK",) + subnet_titles()
+        active_subnet = self.app.vars["turn_subnet"].get()
+        subnet_choice = tk.StringVar(value=active_subnet if active_subnet else subnet_labels[0])
+        subnet_box = ttk.Combobox(transport.body, textvariable=subnet_choice,
+                                  values=subnet_labels, state="readonly")
+        subnet_box.pack(fill="x")
+        def update_subnet(_event=None):
+            selected = subnet_choice.get()
+            self.app.vars["turn_subnet"].set("" if selected == subnet_labels[0] else selected)
+        subnet_box.bind("<<ComboboxSelected>>", update_subnet)
+        update_subnet()
+
+        label(transport.body, "Количество TURN-IP", size=9, color=MUTED).pack(anchor="w", pady=(10, 5))
+        limit_labels = {"ALL": "Все", "1": "1", "2": "2", "4": "4", "9": "9"}
+        reverse_limits = {value: key for key, value in limit_labels.items()}
+        limit_choice = tk.StringVar(value=limit_labels.get(self.app.vars["turn_ip_limit"].get(), "Все"))
+        limit_box = ttk.Combobox(transport.body, textvariable=limit_choice,
+                                 values=tuple(limit_labels.values()), state="readonly")
+        limit_box.pack(fill="x")
+        def update_limit(_event=None):
+            self.app.vars["turn_ip_limit"].set(reverse_limits[limit_choice.get()])
+        limit_box.bind("<<ComboboxSelected>>", update_limit)
+        update_limit()
+
+        self.field(transport.body, "Свой список TURN-IP (необязательно)", "custom_turn_ips")
         self.field(transport.body, "DNS-сервер (переопределение)", "dns_override")
-        label(transport.body, "Пустое поле — DNS сервера. TURN IP не задавайте произвольно: адреса должны соответствовать выданным VK учётным данным.", color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(6, 0))
+        label(transport.body, "Подсеть выбирает только кандидаты VK TURN. Свой список адресов имеет приоритет; пустые значения используют адреса из ответа VK.", color=DIM, size=8, wraplength=500, justify="left").pack(fill="x", pady=(6, 0))
         right = frame(body)
         right.grid(row=0, column=1, sticky="new")
         ports = self.section(right, "Локальные порты", "Доступны только на этом компьютере: 127.0.0.1.")
