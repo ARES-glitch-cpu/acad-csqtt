@@ -463,10 +463,19 @@ func (a *App) TrustDeployHostKey(fingerprint string) error {
 	return nil
 }
 
-func (a *App) StartDeploy(actionID string) error {
+func (a *App) StartDeploy(actionID, destructiveConfirmation string) error {
 	a.deployMu.Lock()
 	if a.deployRunning { a.deployMu.Unlock(); return errors.New("операция на сервере уже выполняется") }
 	if a.deployLast==nil { a.deployMu.Unlock(); return errors.New("сначала выполните проверку SSH-соединения и сервера") }
+	var selected *DeployAction
+	for i:=range a.deployLast.Actions {
+		if a.deployLast.Actions[i].ID==actionID { selected=&a.deployLast.Actions[i]; break }
+	}
+	if selected==nil { a.deployMu.Unlock(); return errors.New("действие отсутствует в последней проверенной инвентаризации") }
+	if selected.Destructive && destructiveConfirmation!="УДАЛИТЬ CSQTT" {
+		a.deployMu.Unlock()
+		return errors.New("для удаления или переустановки требуется подтверждение фразой «УДАЛИТЬ CSQTT»")
+	}
 	a.deployRunning=true
 	a.deployMu.Unlock()
 	go func(){
