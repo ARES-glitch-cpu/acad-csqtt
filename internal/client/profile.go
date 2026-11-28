@@ -157,7 +157,9 @@ func (p Profile) Validate() ([]string, error) {
 		return nil, errors.New("Неверная обфускация.")
 	}
 	transport := p.TurnTransport
-	if transport == "" { transport = "udp" }
+	if transport == "" {
+		if p.InternetMode == "proxy" { transport = "tcp" } else { transport = "udp" }
+	}
 	if transport != "udp" && transport != "tcp" {
 		return nil, errors.New("TURN: выберите UDP или TCP.")
 	}
