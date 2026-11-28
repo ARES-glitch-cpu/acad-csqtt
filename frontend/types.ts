@@ -20,6 +20,22 @@ export interface Profile {
   internet_mode: string;
   system_proxy: string;
   tun: string;
+  turn_transport: string;
+  gooby: boolean;
+  gooby_strategy: string;
+  fingerprint: string;
+  vk_auth_mode: string;
+  client_ids: string;
+  captcha_mode: string;
+  custom_turn_ips: string;
+  domain_routing: boolean;
+  exclude_ru_zones: boolean;
+  template_domains: boolean;
+  domain_whitelist: boolean;
+  direct_domains: string;
+  ip_routing: boolean;
+  ip_whitelist: boolean;
+  direct_ips: string;
 }
 export interface Update { version: string; url: string }
 export interface State {
@@ -32,5 +48,9 @@ export const defaults: Profile = {
   role: 'admin', share_link: '', client_password: '', dns: '',
   server: '', password: '', hashes: '', proxy: '10.0.0.1:3128', proxy_user: '', proxy_password: '',
   socks_port: '1080', http_port: '8080', workers: '6', turn: '', obfs: 'unified', srtp: 'auto',
-  generation: '0', salt: '', internet_mode: 'proxy', system_proxy: '0', tun: '0'
+  generation: '0', salt: '', internet_mode: 'proxy', system_proxy: '0', tun: '0',
+  turn_transport: 'tcp', gooby: false, gooby_strategy: 'current', fingerprint: 'chrome',
+  vk_auth_mode: 'vkcalls', client_ids: '', captcha_mode: 'auto', custom_turn_ips: '',
+  domain_routing: false, exclude_ru_zones: false, template_domains: false, domain_whitelist: false,
+  direct_domains: '', ip_routing: false, ip_whitelist: false, direct_ips: ''
 };
