@@ -21,7 +21,10 @@ func valid() Profile {
 	p.Hashes = "https://vk.com/call/join/testhash123456?extra=1"
 	return p
 }
-func TestPortableProfileAndCommandCompatibility(t *testing.T) {
+func TestConfigJSONProfileAndCommandCompatibility(t *testing.T) {
+	configRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+	t.Setenv("APPDATA", configRoot)
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	p := valid()
 	p.ProxyUser = "test-user"
@@ -29,53 +32,57 @@ func TestPortableProfileAndCommandCompatibility(t *testing.T) {
 	p.Tun = "1"
 	p.SystemProxy = "1"
 	p.Salt = "test-salt"
+	p.GoobyStrategy = "gentle"
+	p.Fingerprint = "firefox"
+	p.ClientIDs = "client-a,client-b"
+	p.DomainRouting = true
+	p.DomainWhitelist = true
+	p.DirectDomains = "example.com,*.example.net"
+	p.IPRouting = true
+	p.DirectIPs = "192.0.2.0/24"
 	directory := t.TempDir()
-	if e := SaveProfile(directory, p, true); e != nil {
-		t.Fatal(e)
-	}
-	loaded, e := LoadProfile(directory)
-	if e != nil || p != loaded {
-		t.Fatalf("profile roundtrip: %v", e)
-	}
-	copyDir := t.TempDir()
-	data, _ := os.ReadFile(filepath.Join(directory, "profile.json"))
-	os.WriteFile(filepath.Join(copyDir, "profile.json"), data, 0600)
-	if copied, e := LoadProfile(copyDir); e != nil || copied != p {
-		t.Fatal("profile is not portable")
-	}
-	args, env, e := CoreCommand(directory, p, 19091)
-	if e != nil {
-		t.Fatal(e)
-	}
+	if err := SaveProfile(directory, p, true); err != nil { t.Fatal(err) }
+	configPath, err := ProfileConfigPath(directory)
+	if err != nil { t.Fatal(err) }
+	if filepath.Base(configPath) != "config.json" { t.Fatalf("unexpected config filename: %s", configPath) }
+	loaded, err := LoadProfile(directory)
+	if err != nil || p != loaded { t.Fatalf("config roundtrip: %v", err) }
+	data, err := os.ReadFile(configPath)
+	if err != nil { t.Fatal(err) }
+	var decoded Profile
+	if err := json.Unmarshal(data, &decoded); err != nil || decoded != p { t.Fatalf("invalid config.json: %v", err) }
+	args, env, err := CoreCommand(directory, p, 19091)
+	if err != nil { t.Fatal(err) }
 	command := strings.Join(args, " ")
-	if strings.Contains(command, p.Password) || strings.Contains(command, p.ProxyPassword) {
-		t.Fatal("password in command")
+	if strings.Contains(command, p.Password) || strings.Contains(command, p.ProxyPassword) { t.Fatal("password in command") }
+	if !strings.Contains(command, "--turn-transport tcp --obfs") || !strings.Contains(command, "--port 443") { t.Fatal(command) }
+	for _, flag := range []string{"--fingerprint firefox", "--client-ids client-a,client-b", "--domain-routing", "--domain-whitelist", "--ip-routing", "--direct-ips 192.0.2.0/24"} {
+		if !strings.Contains(command, flag) { t.Fatalf("missing core option %q in %s", flag, command) }
 	}
-	if !strings.Contains(command, "--turn-transport tcp --port 443") {
-		t.Fatal(command)
-	}
-	if !strings.Contains(strings.Join(env, "\n"), "CSQTT_PROXY_PASSWORD="+p.ProxyPassword) {
-		t.Fatal("missing proxy auth")
-	}
-	t.Setenv("CSQTT_HTTP_PROXY", "stale")
+	if !strings.Contains(strings.Join(env, "\\n"), "CSQTT_PROXY_PASSWORD="+p.ProxyPassword) { t.Fatal("missing proxy auth") }
 	p.InternetMode = "direct"
 	p.Proxy = ""
-	args, env, e = CoreCommand(directory, p, 19091)
-	if e != nil {
-		t.Fatal(e)
+	p.TurnTransport = "udp"
+	p.Gooby = false
+	args, env, err = CoreCommand(directory, p, 19091)
+	if err != nil { t.Fatal(err) }
+	command = strings.Join(args, " ")
+	if strings.Contains(command, "--port") { t.Fatalf("direct mode must use port from TURN URI: %s", command) }
+	if !strings.Contains(command, "--turn-transport udp") { t.Fatal(command) }
+	for _, value := range env {
+		if strings.HasPrefix(value, "CSQTT_HTTP_PROXY=") || strings.HasPrefix(value, "CSQTT_PROXY_PASSWORD=") { t.Fatal("direct mode inherited proxy") }
 	}
-	for _, v := range env {
-		if strings.HasPrefix(v, "CSQTT_HTTP_PROXY=") || strings.HasPrefix(v, "CSQTT_PROXY_PASSWORD=") {
-			t.Fatal("direct mode inherited proxy")
-		}
-	}
-	if e := SaveProfile(directory, p, false); e != nil {
-		t.Fatal(e)
-	}
-	if _, e := os.Stat(filepath.Join(directory, "profile.json")); !os.IsNotExist(e) {
-		t.Fatal("profile not removed")
-	}
+	p.TurnTransport = "tcp"
+	p.Gooby = true
+	p.GoobyStrategy = "extended"
+	args, _, err = CoreCommand(directory, p, 19091)
+	if err != nil { t.Fatal(err) }
+	command = strings.Join(args, " ")
+	if !strings.Contains(command, "--gooby --gooby-strategy extended") { t.Fatal(command) }
+	if err := SaveProfile(directory, p, false); err != nil { t.Fatal(err) }
+	if _, err := os.Stat(configPath); !os.IsNotExist(err) { t.Fatal("config.json not removed") }
 }
+
 func TestUpdateOpensReleasePageAndRejectsUntrustedAssets(t *testing.T) {
 	tag := "v1.4.2"
 	asset := map[string]string{"name": "CSQTT-" + tag + "-Win10-x64.zip", "state": "uploaded", "browser_download_url": "https://github.com/" + repository + "/releases/download/" + tag + "/CSQTT-" + tag + "-Win10-x64.zip"}
