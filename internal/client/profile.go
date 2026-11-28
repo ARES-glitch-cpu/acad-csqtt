@@ -54,10 +54,25 @@ type Profile struct {
 	IPRouting     bool   `json:"ip_routing"`
 	IPWhitelist   bool   `json:"ip_whitelist"`
 	DirectIPs     string `json:"direct_ips"`
+	DeployHost          string `json:"deploy_host"`
+	DeployUser          string `json:"deploy_user"`
+	DeployPassword      string `json:"deploy_password"`
+	DeploySSHPort       string `json:"deploy_ssh_port"`
+	DeployPeerPort      string `json:"deploy_peer_port"`
+	DeployWebPort       string `json:"deploy_web_port"`
+	DeployPrivateKey    string `json:"deploy_private_key"`
+	DeployKeyPassphrase string `json:"deploy_key_passphrase"`
+	DeployHostKey       string `json:"deploy_host_key"`
+	DeployMode          string `json:"deploy_mode"`
+	DeployInstance      string `json:"deploy_instance"`
+	DeployMainPassword  string `json:"deploy_main_password"`
+	DeployWebLogin      string `json:"deploy_web_login"`
+	DeployWebPassword   string `json:"deploy_web_password"`
+	DeploySecretPath    string `json:"deploy_secret_path"`
 }
 
 func DefaultProfile() Profile {
-	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0", TurnTransport: "tcp", GoobyStrategy: "current", Fingerprint: "chrome", VkAuthMode: "vkcalls", CaptchaMode: "auto", TurnIPLimit: "ALL"}
+	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0", TurnTransport: "tcp", GoobyStrategy: "current", Fingerprint: "chrome", VkAuthMode: "vkcalls", CaptchaMode: "auto", TurnIPLimit: "ALL", DeploySSHPort: "22", DeployPeerPort: "46000", DeployWebPort: "46002", DeployMode: "systemd", DeployInstance: "main"}
 }
 
 var separators = regexp.MustCompile(`[\s,;]+`)
