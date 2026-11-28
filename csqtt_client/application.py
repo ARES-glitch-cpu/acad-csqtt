@@ -27,7 +27,7 @@ if os.name == "nt":
 else:
     from csqtt_client.platform.linux.profiles import load_profile, save_profile, delete_profile, profile_exists
 from csqtt_client.services.proxy import proxy_connect
-from csqtt_client.services.tunnel import core_command
+from csqtt_client.services.tunnel import core_command, resolve_turn_transport
 
 
 class App:
@@ -46,6 +46,12 @@ class App:
         self.tun_recovery_error = None
         self.tun_uds = None
         self.tun_bypass_ips = []
+        self.core_started_at = 0.0
+        self.current_transport = None
+        self.adaptive_fallback_attempted = False
+        self.pending_transport_override = None
+        self.auto_restart_pending = False
+        self.active_workers = 0
         try:
             profile = load_profile()
         except Exception:
@@ -206,6 +212,10 @@ class App:
 
     def start(self):
         try:
+            transport_override = self.pending_transport_override
+            self.pending_transport_override = None
+            if transport_override is None:
+                self.adaptive_fallback_attempted = False
             profile = self.profile()
             # Persist the form as entered. The parsed server password belongs
             # to this active session and must not overwrite the admin form.
@@ -242,7 +252,10 @@ class App:
                 check.bind(("127.0.0.1", 0))
                 self.packet_port = check.getsockname()[1]
             self.tun_uds = f"csqtt-{uuid.uuid4().hex}" if profile.mode == "tun" and sys.platform == "linux" else None
-            args, env = core_command(profile, self.packet_port, self.tun_uds)
+            args, env = core_command(profile, self.packet_port, self.tun_uds, transport_override)
+            self.current_transport = resolve_turn_transport(profile, transport_override)
+            self.core_started_at = time.monotonic()
+            self.active_workers = 0
             if self.remember.get():
                 save_profile(profile_to_save)
             else:
@@ -264,8 +277,10 @@ class App:
             self.start_button.configure(state="disabled")
             self.stop_button.configure(state="normal")
             mode_text = ("системный TUN (Linux /dev/net/tun)" if sys.platform == "linux" else "системный TUN (Wintun)") if profile.mode == "tun" else "локальные SOCKS5/HTTP-прокси"
-            internet_text = "прямое TCP-подключение через интернет" if profile.internet_mode == "direct" else "через корпоративный HTTP CONNECT"
-            self.append(f"Запущено ядро: {internet_text}; TURN :443; режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
+            internet_text = "прямое подключение через интернет" if profile.internet_mode == "direct" else "через корпоративный HTTP CONNECT"
+            self.append(f"Запущено ядро: {internet_text}; TURN {self.current_transport.upper()} :443; режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
+            if profile.turn_transport == "auto":
+                self.append(f"[АВТО] Выбран TURN/{self.current_transport.upper()}.")
         except Exception as error:
             self.ui.show_page("connection")
             messagebox.showerror("Не удалось начать подключение", str(error))
@@ -359,7 +374,11 @@ class App:
                 elif name == "READY":
                     self.ready = True
                 elif name == "STATS":
-                    self.active_count.set(str(payload.get("active", 0)))
+                    self.active_workers = int(payload.get("active", 0) or 0)
+                    self.active_count.set(str(self.active_workers))
+                    if self.running_profile and self.running_profile.turn_transport == "auto" and self.active_workers > 0:
+                        if self.current_transport == "udp":
+                            self.adaptive_fallback_attempted = True
                     self.upload_total.set(f"{payload.get('bytes_up', 0)/1048576:.2f}")
                     self.download_total.set(f"{payload.get('bytes_down', 0)/1048576:.2f}")
                 elif name in ("ACTIVE_ZERO", "SERVER_RESTART", "NETWORK_SUSPECT"):
@@ -446,6 +465,31 @@ class App:
         self.root.withdraw()
         self.stop()
 
+    def _maybe_adaptive_fallback(self):
+        """Switch direct AUTO sessions from UDP to TCP only after a real startup timeout."""
+        profile = self.running_profile
+        if (
+            not self.core
+            or self.stopping
+            or self.auto_restart_pending
+            or not profile
+            or profile.turn_transport != "auto"
+            or profile.internet_mode != "direct"
+            or self.current_transport != "udp"
+            or self.adaptive_fallback_attempted
+            or self.active_workers > 0
+            or not self.core_started_at
+            or time.monotonic() - self.core_started_at < 30
+        ):
+            return
+        self.adaptive_fallback_attempted = True
+        self.pending_transport_override = "tcp"
+        self.auto_restart_pending = True
+        self.append("[АВТО] За 30 секунд не появились рабочие потоки через UDP. Переключаю TURN на TCP.")
+        self.status.set("Автоматическая подстройка: UDP не ответил, переключаюсь на TCP…")
+        self.ui.set_state("recovering")
+        self.stop()
+
     def poll(self):
         for _ in range(200):
             try:
@@ -480,6 +524,11 @@ class App:
                 if self.closing:
                     self.root.destroy()
                     return
+                if self.auto_restart_pending:
+                    self.auto_restart_pending = False
+                    self.append("[АВТО] Запускаю повторное подключение через TCP.")
+                    self.start()
+                    continue
                 self.status.set("Отключено")
                 self.active_count.set("0")
                 self.ui.set_state("offline")
@@ -494,4 +543,5 @@ class App:
                     self.tray = None
                 self.show_window()
                 self.append(f"Не удалось создать значок в трее: {value}")
+        self._maybe_adaptive_fallback()
         self.root.after(100, self.poll)
