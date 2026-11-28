@@ -17,6 +17,7 @@ import sys
 import uuid
 import time
 import webbrowser
+from urllib.parse import urlsplit
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -182,11 +183,13 @@ class App:
     def open_panel(self):
         address = self.vars.get("panel_url").get().strip() if self.vars.get("panel_url") else ""
         try:
-            profile = self.profile()
-            profile.validate()
-            if not profile.panel_url.strip():
+            if not address:
                 raise ValueError("Укажите ссылку веб-панели в разделе «Деплой».")
-            webbrowser.open(profile.panel_url.strip(), new=2)
+            parsed = urlsplit(address)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.username or parsed.password:
+                raise ValueError("Ссылка должна быть вида https://домен/путь без логина и пароля.")
+            if not webbrowser.open(address, new=2):
+                raise ValueError("Не удалось открыть браузер по умолчанию.")
             self.append("[ПАНЕЛЬ] Открываю веб-панель сервера в браузере.")
         except Exception as error:
             messagebox.showerror("Веб-панель", str(error), parent=self.root)
