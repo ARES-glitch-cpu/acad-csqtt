@@ -36,10 +36,25 @@ type Profile struct {
 	InternetMode  string `json:"internet_mode"`
 	SystemProxy   string `json:"system_proxy"`
 	Tun           string `json:"tun"`
+	TurnTransport string `json:"turn_transport"`
+	Gooby          bool   `json:"gooby"`
+	GoobyStrategy string `json:"gooby_strategy"`
+	Fingerprint   string `json:"fingerprint"`
+	ClientIDs     string `json:"client_ids"`
+	CaptchaMode   string `json:"captcha_mode"`
+	CustomTurnIPs string `json:"custom_turn_ips"`
+	DomainRouting bool   `json:"domain_routing"`
+	ExcludeRUZones bool  `json:"exclude_ru_zones"`
+	TemplateDomains bool `json:"template_domains"`
+	DomainWhitelist bool `json:"domain_whitelist"`
+	DirectDomains string `json:"direct_domains"`
+	IPRouting     bool   `json:"ip_routing"`
+	IPWhitelist   bool   `json:"ip_whitelist"`
+	DirectIPs     string `json:"direct_ips"`
 }
 
 func DefaultProfile() Profile {
-	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0"}
+	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0", TurnTransport: "udp", GoobyStrategy: "current", Fingerprint: "chrome", VkAuthMode: "vkcalls", CaptchaMode: "auto"}
 }
 
 var separators = regexp.MustCompile(`[\s,;]+`)
@@ -140,46 +155,87 @@ func (p Profile) Validate() ([]string, error) {
 	if p.Obfs != "unified" && p.Obfs != "audio" && p.Obfs != "video" {
 		return nil, errors.New("Неверная обфускация.")
 	}
+	transport := p.TurnTransport
+	if transport == "" { transport = "udp" }
+	if transport != "udp" && transport != "tcp" {
+		return nil, errors.New("TURN: выберите UDP или TCP.")
+	}
+	if p.InternetMode == "proxy" && transport != "tcp" {
+		return nil, errors.New("Корпоративный HTTP CONNECT требует TURN TCP.")
+	}
+	if p.Gooby && (transport != "tcp" || p.InternetMode == "proxy") {
+		return nil, errors.New("Gooby доступен только при прямом подключении через TURN TCP.")
+	}
+	if p.GoobyStrategy != "" && p.GoobyStrategy != "current" && p.GoobyStrategy != "gentle" && p.GoobyStrategy != "extended" {
+		return nil, errors.New("Выберите стратегию Gooby: current, gentle или extended.")
+	}
+	if p.Fingerprint != "" && p.Fingerprint != "chrome" && p.Fingerprint != "safari" && p.Fingerprint != "firefox" && p.Fingerprint != "edge" && p.Fingerprint != "opera" {
+		return nil, errors.New("Неизвестный TLS Client fingerprint.")
+	}
+	if p.CaptchaMode != "" && p.CaptchaMode != "auto" && p.CaptchaMode != "rjs" && p.CaptchaMode != "wv" {
+		return nil, errors.New("Неизвестный режим капчи.")
+	}
 	if p.SRTP != "auto" && p.SRTP != "wrap" && p.SRTP != "dtls" {
 		return nil, errors.New("Неверный режим SRTP.")
 	}
 	return hashes, nil
 }
-func LoadProfile(directory string) (Profile, error) {
-	p := DefaultProfile()
-	data, e := os.ReadFile(filepath.Join(directory, "profile.json"))
-	if os.IsNotExist(e) {
-		data, e = legacyProfile()
-		if os.IsNotExist(e) {
-			return p, nil
-		}
-	}
-	if e != nil {
-		return p, e
-	}
-	e = json.Unmarshal([]byte(strings.TrimPrefix(string(data), "\ufeff")), &p)
-	if e != nil {
-		return DefaultProfile(), errors.New("Не удалось прочитать profile.json. Исходный файл сохранён.")
-	}
-	return p, nil
+// ProfileConfigPath keeps user settings outside the installation directory.
+func ProfileConfigPath(_ string) (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil { return "", err }
+	return filepath.Join(base, "CSQTT", "config.json"), nil
 }
-func SaveProfile(directory string, p Profile, remember bool) error {
-	path := filepath.Join(directory, "profile.json")
-	if !remember {
-		e := os.Remove(path)
-		if e != nil && !os.IsNotExist(e) {
-			return e
+
+func LoadProfile(directory string) (Profile, error) {
+	profile := DefaultProfile()
+	configPath, configErr := ProfileConfigPath(directory)
+	var data []byte
+	var err error
+	migrate := false
+	if configErr == nil {
+		data, err = os.ReadFile(configPath)
+	}
+	if os.IsNotExist(err) || configErr != nil {
+		data, err = os.ReadFile(filepath.Join(directory, "profile.json"))
+		migrate = err == nil
+	}
+	if os.IsNotExist(err) {
+		data, err = legacyProfile()
+	}
+	if os.IsNotExist(err) {
+		return profile, nil
+	}
+	if err != nil {
+		return profile, err
+	}
+	if err = json.Unmarshal([]byte(strings.TrimPrefix(string(data), "\\ufeff")), &profile); err != nil {
+		return DefaultProfile(), errors.New("Не удалось прочитать config.json или старый профиль. Исходный файл сохранён.")
+	}
+	if migrate && configErr == nil {
+		if err := SaveProfile(directory, profile, true); err != nil {
+			return profile, fmt.Errorf("профиль прочитан, но миграция в config.json не удалась: %w", err)
 		}
+	}
+	return profile, nil
+}
+
+func SaveProfile(directory string, profile Profile, remember bool) error {
+	path, err := ProfileConfigPath(directory)
+	if err != nil { return err }
+	if !remember {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) { return err }
+		if err := os.Remove(filepath.Join(directory, "profile.json")); err != nil && !os.IsNotExist(err) { return err }
 		return forgetLegacy()
 	}
-	data, e := json.MarshalIndent(p, "", "  ")
-	if e != nil {
-		return e
-	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil { return err }
+	data, err := json.MarshalIndent(profile, "", "  ")
+	if err != nil { return err }
 	temp := path + ".tmp"
 	defer os.Remove(temp)
-	if e = os.WriteFile(temp, append(data, '\n'), 0600); e != nil {
-		return e
+	if err = os.WriteFile(temp, append(data, '\\n'), 0600); err != nil { return err }
+	if runtime.GOOS != "windows" {
+		if err = os.Chmod(temp, 0600); err != nil { return err }
 	}
 	return os.Rename(temp, path)
 }
