@@ -44,8 +44,10 @@ func NewApp(directory, version string, smoke bool) *App {
 		a.loadError = e.Error()
 	}
 	if e == nil && !smoke {
-		if _, err := os.Stat(filepath.Join(directory, "profile.json")); os.IsNotExist(err) && p.Server != "" {
-			a.draft = true
+		if configPath, err := client.ProfileConfigPath(directory); err == nil {
+			if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) && p.Server != "" {
+				a.draft = true
+			}
 		}
 	}
 	return a
