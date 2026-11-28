@@ -48,6 +48,7 @@ class App:
         self.tun_uds = None
         self.tun_bypass_ips = []
         self.core_started_at = 0.0
+        self.credentials_received_at = None
         self.current_transport = None
         self.adaptive_fallback_attempted = False
         self.pending_transport_override = None
@@ -284,6 +285,7 @@ class App:
             args, env = core_command(profile, self.packet_port, self.tun_uds, transport_override)
             self.current_transport = resolve_turn_transport(profile, transport_override)
             self.core_started_at = time.monotonic()
+            self.credentials_received_at = None
             self.active_workers = 0
             if self.remember.get():
                 save_profile(profile_to_save)
@@ -402,6 +404,10 @@ class App:
                     self.config = config
                 elif name == "READY":
                     self.ready = True
+                elif name == "PROGRESS":
+                    if payload.get("kind") == "credentials" and self.credentials_received_at is None:
+                        self.credentials_received_at = time.monotonic()
+                        self.append("[АВТО] TURN-учётные данные получены. Начинаю проверку выбранного транспорта.")
                 elif name == "STATS":
                     self.active_workers = int(payload.get("active", 0) or 0)
                     self.active_count.set(str(self.active_workers))
@@ -507,9 +513,8 @@ class App:
             or self.current_transport != "udp"
             or self.adaptive_fallback_attempted
             or self.active_workers > 0
-            or self.config is None
-            or not self.core_started_at
-            or time.monotonic() - self.core_started_at < 30
+            or self.credentials_received_at is None
+            or time.monotonic() - self.credentials_received_at < 30
         ):
             return
         self.adaptive_fallback_attempted = True
