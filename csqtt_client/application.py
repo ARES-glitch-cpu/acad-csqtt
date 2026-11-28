@@ -309,7 +309,8 @@ class App:
             self.stop_button.configure(state="normal")
             mode_text = ("системный TUN (Linux /dev/net/tun)" if sys.platform == "linux" else "системный TUN (Wintun)") if profile.mode == "tun" else "локальные SOCKS5/HTTP-прокси"
             internet_text = "прямое подключение через интернет" if profile.internet_mode == "direct" else "через корпоративный HTTP CONNECT"
-            self.append(f"Запущено ядро: {internet_text}; TURN {self.current_transport.upper()} :443; режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
+            turn_target = "порт из URI VK" if profile.internet_mode == "direct" else "TCP :443 через CONNECT"
+            self.append(f"Запущено ядро: {internet_text}; TURN {self.current_transport.upper()} ({turn_target}); режим: {mode_text}. Потоков запрошено: {profile.workers}, хешей: {len(hashes)}.")
             if profile.turn_transport == "auto":
                 self.append(f"[АВТО] Выбран TURN/{self.current_transport.upper()}.")
         except Exception as error:
