@@ -26,12 +26,14 @@ def core_command(profile, packet_port, tun_uds=None, transport_override=None):
         "--workers", profile.workers,
         "--exact-workers",
         "--turn-transport", transport,
-        "--port", "443",
         "--obfs", profile.obfs,
         "--srtp-mode", profile.srtp,
         "--gen", profile.generation,
         "--salt", profile.salt,
     ]
+    if profile.internet_mode == "proxy":
+        # Corporate HTTP CONNECT is deliberately restricted to port 443.
+        args += ["--port", "443"]
     if tun_uds:
         args += ["--tun-uds", tun_uds]
     args += ["--fingerprint", profile.fingerprint]
