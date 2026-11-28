@@ -40,6 +40,7 @@ type Profile struct {
 	Gooby          bool   `json:"gooby"`
 	GoobyStrategy string `json:"gooby_strategy"`
 	Fingerprint   string `json:"fingerprint"`
+	VkAuthMode    string `json:"vk_auth_mode"`
 	ClientIDs     string `json:"client_ids"`
 	CaptchaMode   string `json:"captcha_mode"`
 	CustomTurnIPs string `json:"custom_turn_ips"`
@@ -54,7 +55,7 @@ type Profile struct {
 }
 
 func DefaultProfile() Profile {
-	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0", TurnTransport: "udp", GoobyStrategy: "current", Fingerprint: "chrome", VkAuthMode: "vkcalls", CaptchaMode: "auto"}
+	return Profile{Role: "admin", Proxy: "10.0.0.1:3128", SocksPort: "1080", HTTPPort: "8080", Workers: "6", Obfs: "unified", SRTP: "auto", Generation: "0", InternetMode: "proxy", SystemProxy: "0", Tun: "0", TurnTransport: "tcp", GoobyStrategy: "current", Fingerprint: "chrome", VkAuthMode: "vkcalls", CaptchaMode: "auto"}
 }
 
 var separators = regexp.MustCompile(`[\s,;]+`)
@@ -169,6 +170,9 @@ func (p Profile) Validate() ([]string, error) {
 	if p.GoobyStrategy != "" && p.GoobyStrategy != "current" && p.GoobyStrategy != "gentle" && p.GoobyStrategy != "extended" {
 		return nil, errors.New("Выберите стратегию Gooby: current, gentle или extended.")
 	}
+	if p.VkAuthMode != "" && p.VkAuthMode != "vkcalls" && p.VkAuthMode != "auto_js" {
+		return nil, errors.New("Неизвестный режим VK авторизации.")
+	}
 	if p.Fingerprint != "" && p.Fingerprint != "chrome" && p.Fingerprint != "safari" && p.Fingerprint != "firefox" && p.Fingerprint != "edge" && p.Fingerprint != "opera" {
 		return nil, errors.New("Неизвестный TLS Client fingerprint.")
 	}
@@ -244,16 +248,55 @@ func HelperBinaryName() string { if runtime.GOOS == "windows" { return "packet-p
 func tunSocketName() string { return fmt.Sprintf("csqtt-tun-%d", os.Getpid()) }
 
 func CoreCommand(directory string, p Profile, port int) ([]string, []string, error) {
-	hashes, e := p.Validate()
-	if e != nil {
-		return nil, nil, e
+	hashes, err := p.Validate()
+	if err != nil { return nil, nil, err }
+	transport := p.TurnTransport
+	if transport == "" { transport = "tcp" }
+	args := []string{
+		filepath.Join(directory, "bin", CoreBinaryName()),
+		"--peer", strings.TrimSpace(p.Server),
+		"--listen", fmt.Sprintf("127.0.0.1:%d", port),
+		"--vk", strings.Join(hashes, ","),
+		"--workers", p.Workers,
+		"--exact-workers",
+		"--turn-transport", transport,
+		"--obfs", p.Obfs,
+		"--srtp-mode", p.SRTP,
+		"--gen", p.Generation,
+		"--salt", p.Salt,
+		"--fingerprint", valueOr(p.Fingerprint, "chrome"),
+		"--vk-auth-mode", valueOr(p.VkAuthMode, "vkcalls"),
+		"--captcha-mode", valueOr(p.CaptchaMode, "auto"),
 	}
-	args := []string{filepath.Join(directory, "bin", CoreBinaryName()), "--peer", strings.TrimSpace(p.Server), "--listen", fmt.Sprintf("127.0.0.1:%d", port), "--vk", strings.Join(hashes, ","), "--workers", p.Workers, "--exact-workers", "--turn-transport", "tcp", "--port", "443", "--obfs", p.Obfs, "--srtp-mode", p.SRTP, "--gen", p.Generation, "--salt", p.Salt}
-	if p.Tun == "1" && runtime.GOOS == "linux" {
-		args = append(args, "--tun-uds", tunSocketName())
+	if p.InternetMode == "proxy" {
+		args = append(args, "--port", "443")
+	}
+	if p.Gooby {
+		args = append(args, "--gooby", "--gooby-strategy", valueOr(p.GoobyStrategy, "current"))
+	}
+	if strings.TrimSpace(p.ClientIDs) != "" {
+		args = append(args, "--client-ids", strings.TrimSpace(p.ClientIDs))
+	}
+	if strings.TrimSpace(p.CustomTurnIPs) != "" {
+		args = append(args, "--custom-turn-ips", strings.TrimSpace(p.CustomTurnIPs))
 	}
 	if strings.TrimSpace(p.Turn) != "" {
 		args = append(args, "--turn", strings.TrimSpace(p.Turn))
+	}
+	if p.Tun == "1" && runtime.GOOS == "linux" {
+		args = append(args, "--tun-uds", tunSocketName())
+	}
+	if p.DomainRouting { args = append(args, "--domain-routing") }
+	if p.ExcludeRUZones { args = append(args, "--exclude-ru-zones") }
+	if p.TemplateDomains { args = append(args, "--template-domains") }
+	if p.DomainWhitelist { args = append(args, "--domain-whitelist") }
+	if strings.TrimSpace(p.DirectDomains) != "" {
+		args = append(args, "--direct-domains", strings.TrimSpace(p.DirectDomains))
+	}
+	if p.IPRouting { args = append(args, "--ip-routing") }
+	if p.IPWhitelist { args = append(args, "--ip-whitelist") }
+	if strings.TrimSpace(p.DirectIPs) != "" {
+		args = append(args, "--direct-ips", strings.TrimSpace(p.DirectIPs))
 	}
 	env := []string{}
 	for _, item := range os.Environ() {
@@ -269,4 +312,9 @@ func CoreCommand(directory string, p Profile, port int) ([]string, []string, err
 		env = append(env, "CSQTT_HTTP_PROXY="+strings.TrimSpace(p.Proxy), "CSQTT_PROXY_USER="+p.ProxyUser, "CSQTT_PROXY_PASSWORD="+p.ProxyPassword)
 	}
 	return args, env, nil
+}
+
+func valueOr(value, fallback string) string {
+	if strings.TrimSpace(value) == "" { return fallback }
+	return value
 }
