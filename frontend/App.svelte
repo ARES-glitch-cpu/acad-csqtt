@@ -9,7 +9,7 @@
  import {defaults,type Profile,type State,type Update} from './types';
  import {version} from './package.json';
 
- type Page='connection'|'settings'|'logs';
+ type Page='connection'|'settings'|'routing'|'logs';
  let profile:Profile={...defaults};
  let remember=true;
  let page:Page='connection';
@@ -34,8 +34,8 @@
  $: stopping=state.status==='stopping';
  $: connecting=['connecting','checking','recovering'].includes(state.status);
  $: statusTitle=({offline:'Не подключено',connecting:'Устанавливаем связь',checking:'Проверяем интернет',online:'Защищённое соединение',recovering:'Восстанавливаем связь',stopping:'Завершаем сессию',unconfirmed:'Требуется проверка'} as Record<string,string>)[state.status]||state.status;
- $: pageTitle=page==='connection'?'Обзор соединения':page==='settings'?'Параметры подключения':'Журнал событий';
- $: pageSubtitle=page==='connection'?'Единая панель управления защищённым подключением.':page==='settings'?'Профиль, транспорт и параметры локальной сети.':'Диагностика, события ядра и состояние сессии.';
+ $: pageTitle=page==='connection'?'Обзор соединения':page==='settings'?'Параметры подключения':page==='routing'?'Маршрутизация':'Журнал событий';
+ $: pageSubtitle=page==='connection'?'Единая панель управления защищённым подключением.':page==='settings'?'Профиль, транспорт и параметры локальной сети.':page==='routing'?'Правила обработки доменов и IPv4-адресов в системном TUN.':'Диагностика, события ядра и состояние сессии.';
  $: if(state.update&&state.update.version!==dismissed)modal=state.update;
  $: if(manualUpdate&&!state.updateChecking){manualUpdate=false;if(state.update)modal=state.update;}
 
@@ -140,8 +140,11 @@
    <button class:active={page==='settings'} class="nav-link" on:click={()=>page='settings'}>
     <span class="nav-icon"><Icon name="settings" size={19}/></span><span>Настройки</span><kbd>02</kbd>
    </button>
+   <button class:active={page==='routing'} class="nav-link" on:click={()=>page='routing'}>
+    <span class="nav-icon"><Icon name="route" size={19}/></span><span>Роутинг</span><kbd>03</kbd>
+   </button>
    <button class:active={page==='logs'} class="nav-link" on:click={()=>page='logs'}>
-    <span class="nav-icon"><Icon name="terminal" size={19}/></span><span>Журнал</span><kbd>03</kbd>
+    <span class="nav-icon"><Icon name="terminal" size={19}/></span><span>Журнал</span><kbd>04</kbd>
    </button>
   </nav>
   <div class="sidebar-spacer"></div>
@@ -239,8 +242,16 @@
       <button class="secondary-button" disabled={proxyBusy} on:click={checkProxy}><Icon name="refresh" size={15}/>{proxyBusy?'Проверяю…':'Проверить прокси :443'}</button>
       {#if proxyMessage}<p class="feedback" class:success={proxyOK} role="status">{proxyMessage}</p>{/if}
      </section>
-     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol violet"><Icon name="settings" size={18}/></span><div><h3>Туннель и транспорт</h3><p>Параметры ядра и маскировки.</p></div></div>
-      <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'workers',label:'Количество потоков'},{key:'obfs',label:'Обфускация',options:['unified','audio','video']},{key:'srtp',label:'Режим SRTP',options:['auto','wrap','dtls']},{key:'turn',label:'TURN-хост',hint:'Необязательно · домен или IP без порта'},{key:'dns',label:'DNS-серверы IPv4',hint:'Через запятую. Пустое значение — DNS сервера.'}]}/>
+     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol violet"><Icon name="settings" size={18}/></span><div><h3>Туннель и транспорт</h3><p>Параметры ядра, маскировки и TURN.</p></div></div>
+      <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'workers',label:'Количество потоков'},{key:'turn_transport',label:'Транспорт TURN',options:['udp','tcp']},{key:'obfs',label:'Обфускация',options:['unified','audio','video']},{key:'srtp',label:'Режим SRTP',options:['auto','wrap','dtls']},{key:'turn',label:'TURN-хост',hint:'Необязательно · домен или IP без порта'},{key:'custom_turn_ips',label:'Пользовательские TURN-IP',hint:'Список IP:порт через запятую, только адреса из доверенного пула VK.'},{key:'dns',label:'DNS-серверы IPv4',hint:'Через запятую. Пустое значение — DNS сервера.'}]}/>
+     </section>
+     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol cyan"><Icon name="shield" size={18}/></span><div><h3>Gooby · маскировка TCP</h3><p>Встроенный SOCKS5 движок Android 2.5.3, только для прямого TCP/TLS.</p></div></div>
+      <label class="save-toggle"><input type="checkbox" checked={profile.gooby} disabled={running||profile.turn_transport!=='tcp'||profile.internet_mode==='proxy'} on:change={e=>{profile.gooby=e.currentTarget.checked;dirty();}}/><span><b>Включить Gooby</b><small>Нельзя использовать с UDP или корпоративным HTTP CONNECT.</small></span></label>
+      <Fields disabled={running||!profile.gooby} bind:profile changed={dirty} fields={[{key:'gooby_strategy',label:'Стратегия',options:['current','gentle','extended']}]}/>
+      <div class="config-path"><Icon name="info" size={15}/><span>Gooby обрабатывает только начальные TCP/TLS-пакеты соединения. Уже установленный трафик не изменяется.</span></div>
+     </section>
+     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol violet"><Icon name="fingerprint" size={18}/></span><div><h3>Параметры VK и TLS</h3><p>Совместимость аутентификации и TLS ClientHello.</p></div></div>
+      <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'fingerprint',label:'TLS Client fingerprint',options:['chrome','safari','firefox','edge','opera']},{key:'vk_auth_mode',label:'Авторизация VK',options:['vkcalls','auto_js']},{key:'captcha_mode',label:'Обработка капчи',options:['auto','rjs','wv']},{key:'client_ids',label:'Дополнительные Client IDs',hint:'Необязательно · значения через запятую'}]}/>
      </section>
      <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol amber"><Icon name="monitor" size={18}/></span><div><h3>Локальные порты</h3><p>Адреса прокси, доступных на этом компьютере.</p></div></div>
       <Fields disabled={running} bind:profile changed={dirty} fields={[{key:'socks_port',label:'Порт SOCKS5'},{key:'http_port',label:'Порт HTTP'},{key:'generation',label:'Поколение'},{key:'salt',label:'Salt',secret:true}]}/>
@@ -253,6 +264,24 @@
       <button class="secondary-button" disabled={state.updateChecking} on:click={()=>void checkUpdates().catch(e=>error=String(e))}><Icon name="refresh" size={15}/>{state.updateChecking?'Проверяю…':'Проверить обновления'}</button>
       <p class="feedback">{state.updateMessage}</p>
       {#if state.update}<button class="inline-link" on:click={()=>modal=state.update}>Доступно обновление <Icon name="arrow" size={15}/></button>{/if}
+     </section>
+    </div>
+   </section>
+  {:else if page==='routing'}
+   <section class="settings-page routing-page">
+    <div class="settings-intro"><div><span class="section-kicker">ПРАВИЛА ТРАФИКА</span><h2>Маршрутизация</h2><p>Списки применяются Rust-ядром в системном TUN. В режиме локального прокси другие приложения не перенаправляются.</p></div></div>
+    <div class="settings-grid">
+     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol cyan"><Icon name="globe" size={18}/></span><div><h3>Маршрутизация доменов</h3><p>Правила обработки доменных имён.</p></div></div>
+      <label class="save-toggle"><input type="checkbox" checked={profile.domain_routing} disabled={running} on:change={e=>{profile.domain_routing=e.currentTarget.checked;dirty();}}/><span><b>Включить правила доменов</b><small>Использовать список ниже при работе системного TUN.</small></span></label>
+      <label class="save-toggle"><input type="checkbox" checked={profile.domain_whitelist} disabled={running||!profile.domain_routing} on:change={e=>{profile.domain_whitelist=e.currentTarget.checked;dirty();}}/><span><b>Белый список</b><small>Туннелировать только перечисленные домены; выключено — чёрный список.</small></span></label>
+      <label class="field"><span>Домены</span><textarea rows="7" disabled={running||!profile.domain_routing} bind:value={profile.direct_domains} on:input={dirty} spellcheck="false" placeholder="example.com&#10;*.example.net&#10;vk.com"></textarea><small>По одному домену или шаблону на строку.</small></label>
+      <label class="save-toggle"><input type="checkbox" checked={profile.template_domains} disabled={running||!profile.domain_routing} on:change={e=>{profile.template_domains=e.currentTarget.checked;dirty();}}/><span><b>Учитывать шаблонные домены</b><small>Обрабатывать записи вида *.example.com.</small></span></label>
+      <label class="save-toggle"><input type="checkbox" checked={profile.exclude_ru_zones} disabled={running||!profile.domain_routing} on:change={e=>{profile.exclude_ru_zones=e.currentTarget.checked;dirty();}}/><span><b>Исключить зоны RU / SU / РФ</b><small>Применять системное исключение доменных зон.</small></span></label>
+     </section>
+     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol violet"><Icon name="route" size={18}/></span><div><h3>Маршрутизация IPv4</h3><p>Адреса, диапазоны и CIDR.</p></div></div>
+      <label class="save-toggle"><input type="checkbox" checked={profile.ip_routing} disabled={running} on:change={e=>{profile.ip_routing=e.currentTarget.checked;dirty();}}/><span><b>Включить IP-маршрутизацию</b><small>Правила применяются к IPv4-адресам.</small></span></label>
+      <label class="save-toggle"><input type="checkbox" checked={profile.ip_whitelist} disabled={running||!profile.ip_routing} on:change={e=>{profile.ip_whitelist=e.currentTarget.checked;dirty();}}/><span><b>Белый список</b><small>Туннелировать только указанные IP; выключено — чёрный список.</small></span></label>
+      <label class="field"><span>IPv4 / CIDR / диапазоны</span><textarea rows="7" disabled={running||!profile.ip_routing} bind:value={profile.direct_ips} on:input={dirty} spellcheck="false" placeholder="192.0.2.10&#10;198.51.100.0/24&#10;203.0.113.10-203.0.113.20"></textarea><small>По одному правилу на строку.</small></label>
      </section>
     </div>
    </section>
