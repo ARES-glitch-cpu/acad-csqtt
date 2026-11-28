@@ -95,7 +95,8 @@ class App:
         self.log_menu.add_command(label="Выделить всё", command=self.select_log)
         self.log.bind("<Button-3>", self.show_log_menu)
         self.recover_tun_state()
-        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray if os.name == "nt" else self.close)
+        # The close button hides into the tray on both desktop platforms.
+        root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
         root.bind("<Unmap>", self.on_minimize)
         root.bind("<Destroy>", self.on_destroy, add="+")
         root.after(100, self.poll)
@@ -121,8 +122,9 @@ class App:
             self.append(f"Проверка аварийного восстановления TUN не выполнена: {error}")
 
     def start_tray(self):
-        from csqtt_client.platform.windows.tray import TrayIcon
-        self.tray = TrayIcon(self.events, f"CSQTT v{APP_VERSION}")
+        from csqtt_client.platform.tray import TrayIcon
+        if self.tray is None:
+            self.tray = TrayIcon(self.events, f"CSQTT v{APP_VERSION}")
 
     def hide_to_tray(self):
         if self.closing:
@@ -135,7 +137,10 @@ class App:
             self.close()
 
     def on_minimize(self, event):
-        if os.name == "nt" and event.widget is self.root and self.root.state() == "iconic":
+        # Both Windows and Linux window managers report a real minimize as "iconic".
+        # A withdraw() used to hide the window in the tray reports "withdrawn", so
+        # this guard prevents a recursive hide/close.
+        if event.widget is self.root and self.root.state() == "iconic":
             self.hide_to_tray()
 
     def show_window(self):
