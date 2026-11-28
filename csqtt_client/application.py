@@ -123,8 +123,13 @@ class App:
 
     def start_tray(self):
         from csqtt_client.platform.tray import TrayIcon
-        if self.tray is None:
+        if self.tray is not None:
+            return
+        try:
             self.tray = TrayIcon(self.events, f"CSQTT v{APP_VERSION}")
+        except Exception as error:
+            self.tray = None
+            self.append(f"Системный трей недоступен: {error}. Закрытие окна завершит приложение.")
 
     def hide_to_tray(self):
         if self.closing:
