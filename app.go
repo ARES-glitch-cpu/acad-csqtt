@@ -35,6 +35,10 @@ type App struct {
 	smoke              bool
 	draft              bool
 	saveTimer          *time.Timer
+	deployMu           sync.Mutex
+	pendingDeployHostKey *DeployHostKeyPrompt
+	deployLast         *DeployResult
+	deployRunning      bool
 }
 
 func NewApp(directory, version string, smoke bool) *App {
