@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -125,6 +127,70 @@ func (a *App) SaveProfile(p client.Profile, remember bool) error {
 	a.loadError = ""
 	a.draft = false
 	return nil
+}
+
+func (a *App) ConfigPath() (string, error) {
+	return client.ProfileConfigPath(a.directory)
+}
+
+// ExportProfile writes a portable JSON profile. It is intentionally not DPAPI-wrapped:
+// the exported file can be imported on another computer and must be treated like a password.
+func (a *App) ExportProfile() error {
+	path, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		DefaultFilename: "csqtt-profile.json",
+		Filters: []runtime.FileFilter{{DisplayName: "Профиль CSQTT (JSON)", Pattern: "*.json"}},
+	})
+	if err != nil || path == "" { return err }
+	a.mu.Lock()
+	profile := a.profile
+	a.mu.Unlock()
+	payload := struct {
+		Format string `json:"format"`
+		Version int `json:"version"`
+		Profile client.Profile `json:"profile"`
+	}{Format:"csqtt-profile-export",Version:1,Profile:profile}
+	data, err := json.MarshalIndent(payload,"","  ")
+	if err != nil { return err }
+	return os.WriteFile(path,append(data,'\\n'),0600)
+}
+
+func (a *App) ImportProfile() (client.Profile, error) {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Импортировать профиль CSQTT",
+		Filters: []runtime.FileFilter{{DisplayName: "Профиль CSQTT (JSON)", Pattern: "*.json"}},
+	})
+	if err != nil || path == "" { return client.Profile{}, err }
+	data, err := os.ReadFile(path)
+	if err != nil { return client.Profile{}, err }
+	profile := client.DefaultProfile()
+	var envelope struct {
+		Format string `json:"format"`
+		Version int `json:"version"`
+		Profile json.RawMessage `json:"profile"`
+	}
+	if err := json.Unmarshal(data,&envelope); err != nil { return client.Profile{}, errors.New("Файл не является корректным JSON-профилем CSQTT.") }
+	if envelope.Format == "csqtt-profile-export" {
+		if envelope.Version != 1 || len(envelope.Profile)==0 { return client.Profile{}, errors.New("Версия или содержимое профиля не поддерживаются.") }
+		if err := json.Unmarshal(envelope.Profile,&profile); err != nil { return client.Profile{}, errors.New("Не удалось прочитать профиль внутри JSON-файла.") }
+	} else {
+		if err := json.Unmarshal(data,&profile); err != nil { return client.Profile{}, errors.New("Файл не является корректным JSON-профилем CSQTT.") }
+	}
+	if err := a.SaveProfile(profile,true); err != nil { return client.Profile{}, err }
+	return profile,nil
+}
+
+func (a *App) OpenConfigFolder() error {
+	path, err := client.ProfileConfigPath(a.directory)
+	if err != nil { return err }
+	folder := filepath.Dir(path)
+	if err := os.MkdirAll(folder,0700); err != nil { return err }
+	var command *exec.Cmd
+	switch goruntime.GOOS {
+	case "windows": command = exec.Command("explorer.exe",folder)
+	case "linux": command = exec.Command("xdg-open",folder)
+	default: return errors.New("Открытие папки конфигурации не поддерживается в этой ОС.")
+	}
+	return command.Start()
 }
 
 func (a *App) SetDraft(p client.Profile, remember bool) {
