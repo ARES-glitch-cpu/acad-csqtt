@@ -99,7 +99,7 @@ class Profile:
         if not self.client_ids.strip() or any(not item.strip().isdigit() for item in self.client_ids.split(",")):
             raise ValueError("Client IDs должны содержать числовые идентификаторы через запятую.")
         if self.custom_turn_ips.strip():
-            for endpoint in re.split(r"[,;\\s]+", self.custom_turn_ips.strip()):
+            for endpoint in re.split(r"[,;\s]+", self.custom_turn_ips.strip()):
                 endpoint = endpoint.strip()
                 if not endpoint:
                     continue
@@ -129,7 +129,7 @@ class Profile:
                     "template_domains", "ip_routing_enabled", "ip_is_whitelist"):
             if getattr(self, key) not in ("0", "1"):
                 raise ValueError("Параметры маршрутизации имеют неверный формат.")
-        domains = [item for item in re.split(r"[\\s,;]+", self.direct_domains.strip()) if item]
+        domains = [item for item in re.split(r"[\s,;]+", self.direct_domains.strip()) if item]
         if self.domain_routing_enabled == "1" and not domains and self.exclude_ru_zones != "1" and self.template_domains != "1":
             raise ValueError("Включена маршрутизация доменов, но список доменов пуст.")
         for domain in domains:
@@ -142,7 +142,7 @@ class Profile:
             if any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
                    for label in candidate.split(".")):
                 raise ValueError(f"Некорректный домен в списке маршрутизации: {domain}")
-        ip_tokens = [item for item in re.split(r"[\\s,;]+", self.direct_ips.strip()) if item]
+        ip_tokens = [item for item in re.split(r"[\s,;]+", self.direct_ips.strip()) if item]
         if self.ip_routing_enabled == "1" and not ip_tokens:
             raise ValueError("Включена маршрутизация IP, но список адресов пуст.")
         for token in ip_tokens:
