@@ -15,7 +15,7 @@ def main():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CSQTT.Desktop")
     root = tk.Tk()
     ui = App(root)
-    if sys.platform == "win32":
+    if sys.platform in ("win32", "linux"):
         ui.start_tray()
     if "--smoke" in sys.argv:
         root.after(700, ui.close)
