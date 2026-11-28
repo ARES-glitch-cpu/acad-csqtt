@@ -166,13 +166,18 @@
  }
  async function startDeploy(action:DeployAction){
    if(deployActionBusy||deployBusy)return;
-   if(action.destructive&&!window.confirm('ВНИМАНИЕ: '+action.title+' может остановить и удалить серверные данные. У вас есть резервная копия? Продолжить?'))return;
+   let confirmation='';
+   if(action.destructive){
+     const promptText=window.prompt('Операция «'+action.title+'» может остановить или удалить сервер и его данные. Сначала сделайте резервную копию. Для продолжения введите: УДАЛИТЬ CSQTT');
+     if(promptText!=='УДАЛИТЬ CSQTT')return;
+     confirmation=promptText;
+   }
    if(action.kind==='install'&&!window.confirm('Установить CSQTT на '+profile.deploy_host+'? Сервер пройдёт повторную SSH-проверку.'))return;
    try{
      deployActionBusy=true;deployBusy=true;deployError='';
      deployProgress={percent:0,message:'Подготовка операции…',done:false,success:false};
      await flush();
-     await backend().StartDeploy(action.id);
+     await backend().StartDeploy(action.id,confirmation);
    }catch(e){deployError=String(e);deployActionBusy=false;deployBusy=false;}
  }
  function deployPanelURL(){
