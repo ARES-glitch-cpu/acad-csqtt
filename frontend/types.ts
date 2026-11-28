@@ -28,6 +28,8 @@ export interface Profile {
   client_ids: string;
   captcha_mode: string;
   custom_turn_ips: string;
+  turn_subnet: string;
+  turn_ip_limit: string;
   domain_routing: boolean;
   exclude_ru_zones: boolean;
   template_domains: boolean;
@@ -50,7 +52,7 @@ export const defaults: Profile = {
   socks_port: '1080', http_port: '8080', workers: '6', turn: '', obfs: 'unified', srtp: 'auto',
   generation: '0', salt: '', internet_mode: 'proxy', system_proxy: '0', tun: '0',
   turn_transport: 'tcp', gooby: false, gooby_strategy: 'current', fingerprint: 'chrome',
-  vk_auth_mode: 'vkcalls', client_ids: '', captcha_mode: 'auto', custom_turn_ips: '',
+  vk_auth_mode: 'vkcalls', client_ids: '', captcha_mode: 'auto', custom_turn_ips: '', turn_subnet: '', turn_ip_limit: 'ALL',
   domain_routing: false, exclude_ru_zones: false, template_domains: false, domain_whitelist: false,
   direct_domains: '', ip_routing: false, ip_whitelist: false, direct_ips: ''
 };
