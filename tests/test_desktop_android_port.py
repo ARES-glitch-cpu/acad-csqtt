@@ -97,6 +97,37 @@ class DesktopAndroidPortTests(unittest.TestCase):
         )
         self.assertEqual(profile.validate(), ["testhash123456"])
 
+    def test_android_turn_subnet_preset_and_limits(self):
+        from csqtt_client.models.turn_subnets import get_turn_ips, subnet_titles
+        self.assertEqual(len(subnet_titles()), 5)
+        first = get_turn_ips("95.163.34.0/24", "1")
+        self.assertEqual(first, "95.163.34.48")
+        two = get_turn_ips("95.163.34.0/24", "2")
+        self.assertEqual(len(two.split(",")), 2)
+        profile = replace(
+            base_profile(),
+            turn_subnet="95.163.34.0/24",
+            turn_ip_limit="2",
+        )
+        args, _ = core_command(profile, 9000)
+        self.assertEqual(
+            len(args[args.index("--custom-turn-ips") + 1].split(",")),
+            2,
+        )
+
+    def test_manual_turn_ip_list_overrides_selected_subnet(self):
+        profile = replace(
+            base_profile(),
+            turn_subnet="95.163.34.0/24",
+            turn_ip_limit="ALL",
+            custom_turn_ips="192.0.2.10:443,192.0.2.11:443",
+        )
+        args, _ = core_command(profile, 9000)
+        self.assertEqual(
+            args[args.index("--custom-turn-ips") + 1],
+            "192.0.2.10:443,192.0.2.11:443",
+        )
+
     def test_proxy_forbids_explicit_udp(self):
         profile = replace(
             base_profile(),
