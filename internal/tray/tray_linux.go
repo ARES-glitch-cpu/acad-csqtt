@@ -4,9 +4,9 @@ package tray
 
 import (
 	"errors"
+	"runtime"
 	"sync"
 	"time"
-	"runtime"
 
 	"github.com/getlantern/systray"
 )
@@ -34,17 +34,9 @@ func New(_ []byte, iconPNG []byte, onOpen, onExit func()) (*Tray, error) {
 			openItem := systray.AddMenuItem("Открыть CSQTT", "Показать окно CSQTT")
 			systray.AddSeparator()
 			exitItem := systray.AddMenuItem("Выход", "Остановить соединение и закрыть CSQTT")
+			// Never block the native AppIndicator event loop inside the ready callback.
+			go t.listen(openItem.ClickedCh, exitItem.ClickedCh)
 			close(ready)
-			for {
-				select {
-				case <-openItem.ClickedCh:
-					if t.onOpen != nil { go t.onOpen() }
-				case <-exitItem.ClickedCh:
-					if t.onExit != nil { go t.onExit() }
-				case <-t.done:
-					return
-				}
-			}
 		}, func() {})
 	}()
 	select {
@@ -53,6 +45,19 @@ func New(_ []byte, iconPNG []byte, onOpen, onExit func()) (*Tray, error) {
 	case <-time.After(8 * time.Second):
 		systray.Quit()
 		return nil, errors.New("Linux системный трей не запустился (проверьте AppIndicator/StatusNotifier)")
+	}
+}
+
+func (t *Tray) listen(openClicked, exitClicked <-chan struct{}) {
+	for {
+		select {
+		case <-t.done:
+			return
+		case <-openClicked:
+			if t.onOpen != nil { go t.onOpen() }
+		case <-exitClicked:
+			if t.onExit != nil { go t.onExit() }
+		}
 	}
 }
 
