@@ -2,6 +2,7 @@
 import os
 
 from csqtt_client.config import ROOT, CORE_FILENAME
+from csqtt_client.models.turn_subnets import get_turn_ips
 
 
 def resolve_turn_transport(profile, override=None):
@@ -39,8 +40,12 @@ def core_command(profile, packet_port, tun_uds=None, transport_override=None):
     args += ["--fingerprint", profile.fingerprint]
     args += ["--captcha-mode", profile.captcha_mode]
     args += ["--client-ids", profile.client_ids.strip()]
-    if profile.custom_turn_ips.strip():
-        args += ["--custom-turn-ips", profile.custom_turn_ips.strip()]
+    turn_ips = profile.custom_turn_ips.strip() or get_turn_ips(
+        profile.turn_subnet,
+        profile.turn_ip_limit,
+    )
+    if turn_ips:
+        args += ["--custom-turn-ips", turn_ips]
     if profile.turn.strip():
         args += ["--turn", profile.turn.strip()]
 
