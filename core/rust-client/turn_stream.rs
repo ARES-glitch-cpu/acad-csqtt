@@ -52,19 +52,23 @@ pub enum TurnStreamFrame {
 pub async fn connect(
     endpoint: &TurnEndpoint,
     server: SocketAddr,
+    gooby_proxy: Option<crate::gooby::GoobyProxy>,
 ) -> Result<(
     Arc<TurnStreamWriter>,
     TurnStreamReader,
     TurnStreamWriteFailure,
 )> {
-    let socket = if crate::http_proxy::configured() {
-        if endpoint.port != 443 { bail!("Proxy mode only permits TURN port 443"); }
-        crate::http_proxy::connect(&endpoint.socket_authority()).await?
-    } else {
-        timeout(STREAM_CONNECT_TIMEOUT, TcpStream::connect(server))
-            .await.context("TURN TCP connect timed out")?
-            .with_context(|| format!("TURN {} connect {server}", endpoint.transport.as_str()))?
-    };
+    let socket = timeout(STREAM_CONNECT_TIMEOUT, async {
+        match gooby_proxy {
+            Some(proxy) => crate::gooby::connect(proxy, &endpoint.host, endpoint.port).await,
+            None if crate::http_proxy::configured() => {
+                if endpoint.port != 443 { bail!("Proxy mode only permits TURN port 443"); }
+                crate::http_proxy::connect(&endpoint.socket_authority()).await
+            }
+            None => TcpStream::connect(server).await.context("TURN TCP socket connect"),
+        }
+    }).await.context("TURN TCP/Gooby connect timed out")?
+      .with_context(|| format!("TURN {} connect {}", endpoint.transport.as_str(), endpoint.socket_authority()))?;
     socket
         .set_nodelay(true)
         .context("TURN TCP_NODELAY configuration failed")?;
