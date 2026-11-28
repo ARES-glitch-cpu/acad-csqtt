@@ -128,7 +128,7 @@ type Tray struct {
 }
 
 // New returns only once an actual notification icon and menu are available.
-func New(ico []byte, onExit func()) (*Tray, error) {
+func New(ico, _ []byte, _ func(), onExit func()) (*Tray, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, err
