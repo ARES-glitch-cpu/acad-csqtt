@@ -14,6 +14,21 @@ def base_profile():
 
 
 class DesktopAndroidPortTests(unittest.TestCase):
+    def test_direct_transport_keeps_vk_uri_port(self):
+        profile = base_profile()
+        args, _ = core_command(profile, 9000)
+        self.assertNotIn("--port", args)
+
+    def test_proxy_mode_pins_turn_to_443(self):
+        profile = replace(
+            base_profile(),
+            internet_mode="proxy",
+            proxy="192.0.2.10:3128",
+        )
+        args, _ = core_command(profile, 9000)
+        self.assertEqual(args[args.index("--turn-transport") + 1], "tcp")
+        self.assertEqual(args[args.index("--port") + 1], "443")
+
     def test_auto_transport_selects_udp_direct_and_tcp_via_proxy(self):
         direct = base_profile()
         proxy = replace(direct, internet_mode="proxy", proxy="192.0.2.10:3128")
