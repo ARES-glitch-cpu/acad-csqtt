@@ -774,10 +774,10 @@ async fn connect_transport(
     for endpoint in endpoints {
         let authority = endpoint.socket_authority();
         let attempt = match tokio::time::timeout(TRANSPORT_CONNECT_TIMEOUT, async {
-            let server = match gooby_proxy {
-                Some(proxy) => proxy.address(),
-                None => dns::resolve_socket(&authority).await?,
-            };
+            // Keep the real remote TURN endpoint for NativeCore. Gooby is only the
+            // TCP socket dialer; its loopback SOCKS5 address must never replace the
+            // server identity used by the TURN/native data plane.
+            let server = dns::resolve_socket(&authority).await?;
             match endpoint.transport {
                 TurnWireTransport::Udp => {
                     let bind = if server.is_ipv4() {
