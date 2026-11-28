@@ -6,10 +6,10 @@
  import UpdateDialog from './components/UpdateDialog.svelte';
  import logo from '../assets/icons/CS_logo.png';
  import {backend} from './api';
- import {defaults,type Profile,type State,type Update} from './types';
+ import {defaults,type Profile,type State,type Update,type DeployResult,type DeployProgress,type DeployAction} from './types';
  import {version} from './package.json';
 
- type Page='connection'|'settings'|'routing'|'logs';
+ type Page='connection'|'settings'|'deploy'|'routing'|'logs';
  let profile:Profile={...defaults};
  let remember=true;
  let page:Page='connection';
@@ -28,14 +28,20 @@
  let saveRevision=0;
  let saveChain=Promise.resolve();
  let logBox:HTMLDivElement;
+ let deployResult:DeployResult|null=null;
+ let deployBusy=false;
+ let deployProgress:DeployProgress={percent:0,message:'Готов к проверке',done:false,success:false};
+ let deployError='';
+ let deployActionBusy=false;
+ let deployTimer:ReturnType<typeof setTimeout>;
 
  $: online=state.status==='online';
  $: running=state.status!=='offline';
  $: stopping=state.status==='stopping';
  $: connecting=['connecting','checking','recovering'].includes(state.status);
  $: statusTitle=({offline:'Не подключено',connecting:'Устанавливаем связь',checking:'Проверяем интернет',online:'Защищённое соединение',recovering:'Восстанавливаем связь',stopping:'Завершаем сессию',unconfirmed:'Требуется проверка'} as Record<string,string>)[state.status]||state.status;
- $: pageTitle=page==='connection'?'Обзор соединения':page==='settings'?'Параметры подключения':page==='routing'?'Маршрутизация':'Журнал событий';
- $: pageSubtitle=page==='connection'?'Единая панель управления защищённым подключением.':page==='settings'?'Профиль, транспорт и параметры локальной сети.':page==='routing'?'Правила обработки доменов и IPv4-адресов в системном TUN.':'Диагностика, события ядра и состояние сессии.';
+ $: pageTitle=page==='connection'?'Обзор соединения':page==='settings'?'Параметры подключения':page==='deploy'?'Управление сервером':page==='routing'?'Маршрутизация':'Журнал событий';
+ $: pageSubtitle=page==='connection'?'Единая панель управления защищённым подключением.':page==='settings'?'Профиль, транспорт и параметры локальной сети.':page==='deploy'?'Безопасная проверка, установка и обслуживание VPS через SSH.':page==='routing'?'Правила обработки доменов и IPv4-адресов в системном TUN.':'Диагностика, события ядра и состояние сессии.';
  $: if(state.update&&state.update.version!==dismissed)modal=state.update;
  $: if(manualUpdate&&!state.updateChecking){manualUpdate=false;if(state.update)modal=state.update;}
 
@@ -48,6 +54,7 @@
  onMount(()=>{
    let disposed=false;
    let unsubscribe:undefined|(()=>void);
+   let deployUnsubscribe:undefined|(()=>void);
    void backend().Initial().then(data=>{
      if(disposed)return;
      profile=data.profile;
@@ -55,10 +62,21 @@
      error=data.error;
      loading=false;
      unsubscribe=window.runtime?.EventsOn('state',accept);
+     deployUnsubscribe=window.runtime?.EventsOn('deploy-progress',(next:DeployProgress)=>{
+       deployProgress=next;
+       if(next.done){
+         deployBusy=false;
+         deployActionBusy=false;
+         if(next.success){
+           deployError='';
+           deployTimer=setTimeout(()=>{if(!disposed&&page==='deploy')void inspectDeploy();},1200);
+         }else deployError=next.message;
+       }
+     });
    }).catch(e=>{error=String(e);loading=false;});
-   const unload=()=>{clearTimeout(saveTimer);if(saveRevision)void flush();};
+   const unload=()=>{clearTimeout(saveTimer);clearTimeout(deployTimer);if(saveRevision)void flush();};
    window.addEventListener('beforeunload',unload);
-   return()=>{disposed=true;unsubscribe?.();clearTimeout(saveTimer);window.removeEventListener('beforeunload',unload);};
+   return()=>{disposed=true;unsubscribe?.();deployUnsubscribe?.();clearTimeout(saveTimer);clearTimeout(deployTimer);window.removeEventListener('beforeunload',unload);};
  });
  function chooseRole(role:'admin'|'client'){if(running)return;profile.role=role;dirty();}
  function dirty(){
@@ -127,6 +145,47 @@
    try{await flush();await backend().HideToTray();}
    catch(e){error=String(e);}
  }
+ async function inspectDeploy(){
+   deployBusy=true;deployError='';deployResult=null;
+   deployProgress={percent:0,message:'Подключение по SSH и чтение инвентаризации…',done:false,success:false};
+   try{
+     await flush();
+     deployResult=await backend().InspectDeployServer();
+     deployProgress={percent:deployResult.needsTrust?0.1:1,message:deployResult.message,done:false,success:false};
+   }catch(e){deployError=String(e);}
+   finally{deployBusy=false;}
+ }
+ async function trustDeployKey(){
+   if(!deployResult?.presentedFingerprint)return;
+   try{
+     deployBusy=true;deployError='';
+     await backend().TrustDeployHostKey(deployResult.presentedFingerprint);
+     await inspectDeploy();
+   }catch(e){deployError=String(e);}
+   finally{deployBusy=false;}
+ }
+ async function startDeploy(action:DeployAction){
+   if(deployActionBusy||deployBusy)return;
+   if(action.destructive&&!window.confirm('ВНИМАНИЕ: '+action.title+' может остановить и удалить серверные данные. У вас есть резервная копия? Продолжить?'))return;
+   if(action.kind==='install'&&!window.confirm('Установить CSQTT на '+profile.deploy_host+'? Сервер пройдёт повторную SSH-проверку.'))return;
+   try{
+     deployActionBusy=true;deployBusy=true;deployError='';
+     deployProgress={percent:0,message:'Подготовка операции…',done:false,success:false};
+     await flush();
+     await backend().StartDeploy(action.id);
+   }catch(e){deployError=String(e);deployActionBusy=false;deployBusy=false;}
+ }
+ function deployPanelURL(){
+   const host=profile.deploy_host.trim();
+   const port=profile.deploy_web_port.trim()||'46002';
+   const secret=profile.deploy_secret_path.trim().replace(/^\\/+/, '');
+   return host?'https://'+host+':'+port+(secret?'/'+secret:''):'';
+ }
+ async function copyDeployPanel(){
+   const value=deployPanelURL();
+   if(!value)return;
+   try{await navigator.clipboard.writeText(value);}catch{deployError='Не удалось скопировать ссылку панели.';}
+ }
 </script>
 
 <TitleBar connected={online} {loading} onWindowError={message=>error=message}/>
@@ -144,11 +203,14 @@
    <button class:active={page==='settings'} class="nav-link" on:click={()=>page='settings'}>
     <span class="nav-icon"><Icon name="settings" size={19}/></span><span>Настройки</span><kbd>02</kbd>
    </button>
+   <button class:active={page==='deploy'} class="nav-link" on:click={()=>page='deploy'}>
+    <span class="nav-icon"><Icon name="server" size={19}/></span><span>Деплой</span><kbd>03</kbd>
+   </button>
    <button class:active={page==='routing'} class="nav-link" on:click={()=>page='routing'}>
-    <span class="nav-icon"><Icon name="route" size={19}/></span><span>Роутинг</span><kbd>03</kbd>
+    <span class="nav-icon"><Icon name="route" size={19}/></span><span>Роутинг</span><kbd>04</kbd>
    </button>
    <button class:active={page==='logs'} class="nav-link" on:click={()=>page='logs'}>
-    <span class="nav-icon"><Icon name="terminal" size={19}/></span><span>Журнал</span><kbd>04</kbd>
+    <span class="nav-icon"><Icon name="terminal" size={19}/></span><span>Журнал</span><kbd>05</kbd>
    </button>
   </nav>
   <div class="sidebar-spacer"></div>
@@ -285,6 +347,92 @@
       {#if state.update}<button class="inline-link" on:click={()=>modal=state.update}>Доступно обновление <Icon name="arrow" size={15}/></button>{/if}
      </section>
     </div>
+   </section>
+  {:else if page==='deploy'}
+   <section class="settings-page deploy-page">
+    <div class="settings-intro"><div><span class="section-kicker">SSH · VPS MANAGEMENT</span><h2>Подключение к серверу</h2><p>Инвентаризация выполняется только для чтения. Перед любыми изменениями приложение проверит SSH-ключ и повторно просканирует VPS.</p></div><span class="save-indicator" class:saved={!!profile.deploy_host_key}><i></i>{profile.deploy_host_key?'SSH host key закреплён':'Требуется первое доверие ключу'}</span></div>
+    <div class="settings-grid">
+     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol cyan"><Icon name="server" size={18}/></span><div><h3>SSH-доступ к VPS</h3><p>Обычный пароль или ключ Ed25519/RSA/OpenSSH.</p></div></div>
+      <Fields disabled={deployBusy} bind:profile changed={dirty} fields={[{key:'deploy_host',label:'IP или домен VPS'},{key:'deploy_user',label:'SSH-пользователь'},{key:'deploy_ssh_port',label:'SSH-порт'},{key:'deploy_password',label:'SSH / sudo пароль',secret:true}]}/>
+      <label class="field"><span>Приватный SSH-ключ (необязательно)</span><textarea rows="6" disabled={deployBusy} bind:value={profile.deploy_private_key} on:input={dirty} spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea><small>Если задан ключ, для SSH используется он; пароль выше может использоваться для sudo.</small></label>
+      <Fields disabled={deployBusy} bind:profile changed={dirty} fields={[{key:'deploy_key_passphrase',label:'Парольная фраза ключа',secret:true}]}/>
+      <button class="secondary-button" disabled={deployBusy||!profile.deploy_host.trim()} on:click={()=>void inspectDeploy()}><Icon name="search" size={15}/>{deployBusy?'Проверяю…':'Проверить SSH и сервер'}</button>
+      {#if deployError}<p class="feedback" role="alert">{deployError}</p>{/if}
+     </section>
+     <section class="settings-card"><div class="settings-card-head"><span class="settings-symbol violet"><Icon name="settings" size={18}/></span><div><h3>Параметры установки</h3><p>Порты и способ запуска серверного экземпляра.</p></div></div>
+      <Fields disabled={deployBusy} bind:profile changed={dirty} fields={[{key:'deploy_peer_port',label:'UDP peer-порт'},{key:'deploy_web_port',label:'WEB-порт'},{key:'deploy_mode',label:'Режим установки',options:['systemd','docker']},{key:'deploy_instance',label:'Экземпляр',options:['main','side']}]}/>
+      <div class="config-path"><Icon name="shield" size={15}/><span>Основной сервер: 46000/46002. Второй экземпляр: 46100/46102. Проверка не останавливает работающие службы.</span></div>
+     </section>
+     <section class="settings-card wide"><div class="settings-card-head"><span class="settings-symbol amber"><Icon name="key" size={18}/></span><div><h3>Авторизация и веб-панель</h3><p>Эти данные нужны только для первоначальной установки и сохраняются в config.json.</p></div></div>
+      <div class="settings-grid deploy-secrets">
+       <div><Fields disabled={deployBusy} bind:profile changed={dirty} fields={[{key:'deploy_main_password',label:'Главный пароль CSQTT',secret:true},{key:'deploy_web_login',label:'Логин веб-панели'},{key:'deploy_web_password',label:'Пароль веб-панели',secret:true}]}/></div>
+       <div><Fields disabled={deployBusy} bind:profile changed={dirty} fields={[{key:'deploy_secret_path',label:'Секретный путь панели',hint:'Необязательно, без начального /'}]}/>
+        <div class="known-host"><span>ЗАКРЕПЛЁННЫЙ SSH FINGERPRINT</span><code>{profile.deploy_host_key||'Пока не подтверждён'}</code></div>
+        {#if deployPanelURL()}<div class="deploy-panel-actions"><button class="secondary-button" on:click={()=>void copyDeployPanel()}><Icon name="copy" size={15}/>Копировать ссылку</button><button class="secondary-button" on:click={()=>window.open(deployPanelURL(),'_blank','noopener')}><Icon name="globe" size={15}/>Открыть панель</button></div>{/if}
+       </div>
+      </div>
+     </section>
+    </div>
+
+    {#if deployResult}
+     <section class="deploy-result">
+      {#if deployResult.needsTrust}
+       <div class="hostkey-warning">
+        <div class="settings-card-head"><span class="settings-symbol amber"><Icon name="shield" size={18}/></span><div><h3>{deployResult.keyChanged?'SSH-ключ сервера изменился':'Новый SSH-ключ сервера'}</h3><p>Деплой заблокирован, пока вы не сверите отпечаток с консолью VPS.</p></div></div>
+        {#if deployResult.expectedFingerprint}<div class="known-host"><span>РАНЕЕ ЗАПОМНЕН</span><code>{deployResult.expectedFingerprint}</code></div>{/if}
+        <div class="known-host"><span>СЕРВЕР ПРЕДСТАВИЛ</span><code>{deployResult.presentedFingerprint}</code></div>
+        <p>Проверьте fingerprint независимым способом на VPS. Не подтверждайте ключ, если отпечаток не совпадает.</p>
+        <button class="secondary-button" disabled={deployBusy} on:click={()=>void trustDeployKey()}><Icon name="check" size={15}/>Я сверил fingerprint и доверяю этому ключу</button>
+       </div>
+      {:else}
+       <div class="section-row"><div><span class="section-kicker">READ-ONLY INVENTORY</span><h2>Результат проверки сервера</h2></div><span class="mini-badge online">ПРОВЕРЕНО</span></div>
+       <div class="deploy-summary">
+        <div><span>VPS</span><strong>{deployResult.host}:{deployResult.port}</strong></div>
+        <div><span>Архитектура</span><strong>{deployResult.inventory?.architecture||'Не определена'}</strong></div>
+        <div><span>Найдено серверов</span><strong>{deployResult.inventory?.servers.length??0}</strong></div>
+        <div><span>Занятые порты</span><strong>{deployResult.inventory?.busy.length??0}</strong></div>
+       </div>
+       {#if deployResult.inventory?.servers.length}
+        <div class="inventory-list">
+         {#each deployResult.inventory.servers as server}
+          <div class="inventory-item"><div><strong>{server.name||'CSQTT'}</strong><small>{server.place} · {server.runtime} · {server.state} · {server.version||'версия неизвестна'}</small></div><span>{server.peerPort||'—'} / {server.webPort||'—'}</span></div>
+         {/each}
+        </div>
+       {:else}
+        <p class="feedback">На VPS не найдены управляемые экземпляры CSQTT.</p>
+       {/if}
+       {#if deployResult.inventory?.busy.length}
+        <div class="inventory-list">
+         {#each deployResult.inventory.busy as item}
+          <div class="inventory-item"><div><strong>Занят порт {item.port}/{item.protocol.toUpperCase()}</strong><small>{item.holder}</small></div><span>BUSY</span></div>
+         {/each}
+        </div>
+       {/if}
+       {#if deployResult.notes.length}
+        <div class="deploy-notes">{#each deployResult.notes as note}<p><Icon name="info" size={15}/>{note}</p>{/each}</div>
+       {/if}
+       <div class="section-row"><div><span class="section-kicker">РАЗРЕШЁННЫЕ ДЕЙСТВИЯ</span><h2>Что можно сделать</h2></div></div>
+       {#if deployResult.actions.length}
+        <div class="deploy-actions">
+         {#each deployResult.actions as action}
+          <div class="deploy-action-card"><div><strong>{action.title}</strong><small>{action.detail}</small><span class="action-ports">UDP {action.peerPort} · WEB {action.webPort} · {action.instance}</span></div>
+           <button class:danger={action.destructive} class="secondary-button" disabled={deployActionBusy||deployBusy} on:click={()=>void startDeploy(action)}>{action.destructive?'Подтвердить действие':action.kind==='update'?'Обновить':'Установить'}</button>
+          </div>
+         {/each}
+        </div>
+       {:else}
+        <div class="empty-logs"><span><Icon name="shield" size={28}/></span><strong>Нет безопасных действий</strong><p>Проверьте заметки выше. Возможно, сервером управляет другая программа.</p></div>
+       {/if}
+      {/if}
+     </section>
+    {/if}
+
+    {#if deployBusy||deployProgress.done}
+     <section class="deploy-progress">
+      <div><strong>{deployProgress.message}</strong><span>{Math.round(deployProgress.percent*100)}%</span></div>
+      <div class="progress-track"><i style={"width:"+Math.max(0,Math.min(100,deployProgress.percent*100))+"%"}></i></div>
+     </section>
+    {/if}
    </section>
   {:else if page==='routing'}
    <section class="settings-page routing-page">
