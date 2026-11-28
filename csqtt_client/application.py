@@ -21,15 +21,21 @@ from urllib.parse import urlsplit
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
-from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW, CORE_FILENAME, HELPER_FILENAME
+from csqtt_client.config import APP_VERSION, ROOT, NO_WINDOW, CORE_FILENAME, HELPER_FILENAME, CONFIG_JSON, CONFIG_DIR
 from csqtt_client.models.profile import Profile
 from csqtt_client.models.share_link import parse_csqtt_link
 if os.name == "nt":
-    from csqtt_client.platform.windows.profiles import load_profile, save_profile, delete_profile, profile_exists
+    from csqtt_client.platform.windows.profiles import load_profile, save_profile
 else:
-    from csqtt_client.platform.linux.profiles import load_profile, save_profile, delete_profile, profile_exists
+    from csqtt_client.platform.linux.profiles import load_profile, save_profile
 from csqtt_client.services.proxy import proxy_connect
 from csqtt_client.services.tunnel import core_command, resolve_turn_transport
+
+
+def profile_exists_compat():
+    """Only used to trigger a one-time migration write if the JSON is absent."""
+    from csqtt_client.config import PROFILE, LEGACY_PROFILE
+    return PROFILE.exists() or LEGACY_PROFILE.exists()
 
 
 class App:
@@ -55,15 +61,27 @@ class App:
         self.pending_transport_override = None
         self.auto_restart_pending = False
         self.active_workers = 0
+        self._profile_save_after = None
+        self._autosave_suppressed = True
         try:
             profile = load_profile()
         except Exception:
             profile = Profile()
         self.vars = {k: tk.StringVar(value=str(v)) for k, v in asdict(profile).items()}
-        self.remember = tk.BooleanVar(value=profile_exists())
         self.status = tk.StringVar(value="Укажите сервер и прокси, затем нажмите «Подключить».")
         from csqtt_client.ui.desktop import DesktopUI
         self.ui = DesktopUI(self, root, profile, APP_VERSION, ROOT)
+        # Autosave the entire editable profile, including text areas, after each change.
+        for variable in self.vars.values():
+            variable.trace_add("write", self.schedule_profile_save)
+        for text_widget in (self.hashes, self.ui.route_domains, self.ui.route_ips):
+            if text_widget is not None:
+                text_widget.edit_modified(False)
+                text_widget.bind("<<Modified>>", self.on_profile_text_modified, add="+")
+        self._autosave_suppressed = False
+        # The migrated config is written on first run; an existing config is not rewritten just by opening the app.
+        if not CONFIG_JSON.exists() and profile_exists_compat():
+            self.schedule_profile_save()
         if profile.auto_load_config == "1" and profile.config_file.strip():
             root.after(250, lambda: self.ui.import_config_file(profile.config_file, startup=True))
         self.log.bind("<Control-a>", self.select_log)
@@ -128,6 +146,7 @@ class App:
 
     def on_destroy(self, event):
         if event.widget is self.root:
+            self.save_profile_config_now()
             self.ui.chrome.stop()
             for callback in self.root.tk.call("after", "info"):
                 self.root.after_cancel(callback)
@@ -169,6 +188,80 @@ class App:
         finally:
             self.log_menu.grab_release()
         return "break"
+
+    def schedule_profile_save(self, *_args):
+        """Debounce JSON writes while a user edits text or profile fields."""
+        if self._autosave_suppressed or self.closing:
+            return
+        if self._profile_save_after is not None:
+            try:
+                self.root.after_cancel(self._profile_save_after)
+            except tk.TclError:
+                pass
+        self._profile_save_after = self.root.after(450, self.save_profile_config)
+
+    def on_profile_text_modified(self, event=None):
+        widget = event.widget if event else None
+        if widget is not None and widget.edit_modified():
+            widget.edit_modified(False)
+            self.schedule_profile_save()
+
+    def save_profile_config(self):
+        self._profile_save_after = None
+        try:
+            save_profile(self.profile())
+        except Exception as error:
+            self.append(f"Не удалось сохранить config.json: {error}")
+
+    def save_profile_config_now(self):
+        if self._profile_save_after is not None:
+            try:
+                self.root.after_cancel(self._profile_save_after)
+            except tk.TclError:
+                pass
+            self._profile_save_after = None
+        try:
+            save_profile(self.profile())
+            return True
+        except Exception as error:
+            self.append(f"Не удалось сохранить config.json: {error}")
+            return False
+
+    def open_config_folder(self):
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                os.startfile(str(CONFIG_DIR))
+            else:
+                subprocess.Popen(["xdg-open", str(CONFIG_DIR)])
+        except Exception as error:
+            messagebox.showerror("Папка конфигурации", str(error), parent=self.root)
+
+    def export_profile_json(self):
+        try:
+            profile = asdict(self.profile())
+            payload = {
+                "format": "csqtt-profile-export",
+                "version": 1,
+                "profile": profile,
+            }
+            filename = filedialog.asksaveasfilename(
+                parent=self.root,
+                title="Экспортировать профиль CSQTT",
+                defaultextension=".json",
+                initialfile="csqtt-profile.json",
+                filetypes=[("JSON", "*.json"), ("Все файлы", "*.*")],
+            )
+            if not filename:
+                return
+            Path(filename).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            messagebox.showwarning(
+                "Профиль экспортирован",
+                "Файл содержит пароли, хеши и ссылку подключения в открытом виде. Храните его как пароль и не отправляйте посторонним.",
+                parent=self.root,
+            )
+        except Exception as error:
+            messagebox.showerror("Экспорт профиля", str(error), parent=self.root)
 
     def profile(self):
         values = {k: v.get() for k, v in self.vars.items()}
@@ -290,10 +383,7 @@ class App:
             self.core_started_at = time.monotonic()
             self.credentials_received_at = None
             self.active_workers = 0
-            if self.remember.get():
-                save_profile(profile_to_save)
-            else:
-                delete_profile()
+            save_profile(profile_to_save)
             self.session += 1
             self.ready = False
             self.config = None
@@ -500,6 +590,7 @@ class App:
     def close(self):
         if self.closing:
             return
+        self.save_profile_config_now()
         self.closing = True
         self.root.withdraw()
         self.stop()
